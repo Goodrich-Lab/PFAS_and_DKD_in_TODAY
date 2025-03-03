@@ -1,0 +1,211 @@
+---
+title: 'Today project'
+author: "Hongxu Wang"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+<style type="text/css">
+body{
+font-size: 12pt;
+}
+</style>
+
+```{r exposure outcome setup, include=FALSE}
+source(here::here("!libraries.R"))
+source(here::here("!directories.R"))
+source(here::here("!load_clean_data.R"))
+source(here::here("!functions.R"))
+
+options(knitr.table.format = "html")
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Examine key variables, set in the load_clean_data file.
+```{r define variables}
+# Glucose Outcomes: 
+outcome_glu
+# Tubular Injury Biomarkers 
+outcome_biomaker 
+# PFAS names for analysis
+(analysis_pfas_names <- c(pfas_names_all, "score", "score_pfsas", "score_pfcas")) 
+# Covariates for primary analysis
+covars
+
+# Order of PFAS for figures
+levels
+```
+
+# Survival Analysis
+```{r run model}
+## A. Set up for analysis ------
+# Get the name of all PFAS exposure variables that were just created 
+ind_vars <- data_scaled %>% 
+  dplyr::select(
+    contains("score"), 
+    contains("_sum"),
+    all_of(pfas_names_all)) |> 
+  colnames() %>%  
+  tibble(exposure = .)
+
+# Get the name of all outcome variables created 
+dep_vars <- tibble(time = c(
+  # "daystohyp", 
+  "daystomic"),
+  event = c(
+    # "hyp",
+    "mic"))
+
+# Get dataframe of all exposure outcome combinations
+eo_comb <- list(pfas = ind_vars$exposure, event = dep_vars$event) %>%
+  cross_df() %>% 
+  left_join(dep_vars, by = "event", relationship = "many-to-many")
+
+## B. Set covars ---------
+
+# Get the formula for all models
+models <- eo_comb %>%
+  mutate(covar = str_c(covars, collapse = "+"),
+         formula = str_c("Surv(", time , ",", event, ")", "~", pfas, "+", covar))
+
+## C. Run the models -----
+## log transformed and scaled PFAS
+models$output <- map(models$formula,
+                     ~coxph(as.formula(.), data = data_scaled) %>%
+                       tidy(., conf.int = TRUE))
+
+## Log transformed PFAS (not scaled)
+models$output_pfas_lg2 <- map(models$formula,
+                     ~coxph(as.formula(.), data = data_log2) %>%
+                       tidy(., conf.int = TRUE))
+
+# Clean up results
+pfas_survival_models <- models %>%
+  dplyr::select(-output_pfas_lg2) %>%
+  unnest(output) %>%
+  tidylog::filter(grepl("score", term) | 
+                    grepl("pfas_", term) | 
+                    grepl("_sum", term) & !grepl("quintile",term)) %>%
+  rename_pfas() %>%
+  mutate(HR = exp(estimate),
+         exp_conf_high = exp(conf.high),
+         exp_conf_low = exp(conf.low),
+         sig = ifelse(p.value < 0.05, "Sig.", "Not Sig."), 
+         ind_or_mix = if_else(str_detect(term, "score"), 
+                              "Score", "Individual"), 
+         functional_group = case_when(
+           ind_or_mix == "Score" ~ "Score", 
+           pfas  %in% c("PFOS", "PFHpS", "PFHxS") ~ "SA", 
+           pfas == "NMeFOSAA" ~ "Other", 
+           TRUE ~ "CA") |> 
+           fct_relevel("CA", "SA", "Other", "Score"), 
+         pfas = ifelse(pfas %in% levels, pfas, term), 
+         pfas_chain = rename_pfas_with_chainlength(pfas_names_cleaned = pfas), 
+         pfas_chain = order_pfas_by_chain_length(pfas_chain))
+
+# Clean up results
+pfas_survival_models_lg2 <- models %>%
+    dplyr::select(-output) %>%
+  unnest(output_pfas_lg2) %>%
+  tidylog::filter(grepl("score", term) | 
+                    grepl("pfas_", term) | 
+                    grepl("_sum", term) & !grepl("quintile",term)) %>%
+  rename_pfas() %>%
+  mutate(HR = exp(estimate),
+         exp_conf_high = exp(conf.high),
+         exp_conf_low = exp(conf.low),
+         sig = ifelse(p.value < 0.05, "Sig.", "Not Sig."), 
+         ind_or_mix = if_else(str_detect(term, "score"), 
+                              "Score", "Individual"), 
+         functional_group = case_when(
+           ind_or_mix == "Score" ~ "Score", 
+           pfas  %in% c("PFOS", "PFHpS", "PFHxS") ~ "SA", 
+           pfas == "NMeFOSAA" ~ "Other", 
+           TRUE ~ "CA") |> 
+           fct_relevel("CA", "SA", "Other", "Score"), 
+         pfas = ifelse(pfas %in% levels, pfas, term), 
+         pfas_chain = rename_pfas_with_chainlength(pfas_names_cleaned = pfas), 
+         pfas_chain = order_pfas_by_chain_length(pfas_chain))
+
+pfas_survival_models_result<- pfas_survival_models %>%
+  filter(!(term %in% c("score_quintile", 
+                                 "score_quartile", 
+                                 "score_tertile", 
+                                 "score_median1"))) %>%
+  mutate(`PFAS Name` = `pfas_chain`,
+         `HR[95%CI]` = paste0(round(HR,2), "[", 
+                             round(exp_conf_low, 2), ", ",
+                             round(exp_conf_high, 2), "]"),
+         `P Value` = round(p.value, 2)) %>%
+  dplyr::select(`PFAS Name`, `HR[95%CI]`,`P Value`)
+
+writexl::write_xlsx(pfas_survival_models_result, 
+                    fs::path(dir_results, "Supplemental Table 1.xlsx"))
+```
+
+# Coefficient Plot
+```{r coef plot}
+## D. Plot results ------
+# All results
+(p <- pfas_survival_models %>%
+   ggplot(aes(x = term,y = estimate, color = sig)) +
+   geom_point(size = 1) +
+   geom_errorbar(aes(ymin = conf.low,
+                     ymax = conf.high),
+                 width = 0) +
+   geom_hline(yintercept = 0, linetype = 2) +
+   facet_grid( ~ time, scales = "free") +
+   ylab("Log HR (95% CI)") +
+   theme(text = element_text(size = 10),
+         axis.title.y = element_blank(),
+         panel.background = element_rect(fill="white"),
+         strip.background = element_rect(fill = "white"),
+         axis.line.x = element_line(color = "black"),
+         axis.line.y = element_line(color = "black"),
+         legend.position = "none") +
+   coord_flip() +
+   scale_color_manual(values = c("grey", "red")))
+
+
+pfas_survival_models |> 
+  filter(str_detect(term, "pfcas")) |> 
+  dplyr::select(pfas, event, p.value)
+
+### i) Albuminuria ------
+(fig1a_pfas_albuminuria <- pfas_survival_models %>%
+   dplyr::filter(event == "mic", 
+                 !(term %in% c("score_quintile", 
+                                 "score_quartile", 
+                                 "score_tertile", 
+                                 "score_median1"))) %>% 
+   # mutate(pfas_chain = fct_reorder(pfas_chain, estimate)) %>%
+   ggplot(aes(y = fct_rev(pfas_chain), x = HR)) +
+   geom_point(size = 1) +
+   geom_errorbar(aes(xmin = exp_conf_low,
+                     xmax = exp_conf_high),
+                 width = 0) +
+   geom_vline(xintercept = 1, linetype = 2) +
+   facet_grid(functional_group ~ ., scales = "free", space = "free_y") +
+   xlab("Hazard Ratio (95% CI)") +
+   xlim(c(0, 10)) +
+   theme(strip.text = element_blank(),
+         axis.title.y = element_blank(),
+         panel.background = element_rect(fill="white"),
+         strip.background = element_rect(fill = "white"),
+         axis.line.x = element_line(color = "black"),
+         axis.line.y = element_line(color = "black"),
+         legend.position = "none"))
+
+
+#Save
+ggsave(fig1a_pfas_albuminuria,
+       filename = here::here(dir_figure, "Fig1 Survival Coef plot.jpeg"),
+       width = 4, height = 3)
+```
+

@@ -21,5 +21,6 @@ library(survminer)
 # devtools::install_github("gerkelab/mediator")
 library(mediator)
 library(gridExtra)
+library(correlation)
 
 theme_set(theme_half_open())

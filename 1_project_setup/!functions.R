@@ -74,3 +74,69 @@ rename_outcomes <- function(x){
     x == "seq.12446.49" ~ "a-GST1",
     x == "seq.15509.2" ~ "NAG")
 }
+
+
+
+
+# Rename PFAS -----------------------
+rename_pfas_new <- function(pfas_names, include_asterisk = FALSE, arrange_by_class = FALSE){
+  x <- tibble(pfas = pfas_names)
+  pfas2 <-  x %>%
+    mutate(pfas2 = case_when(
+      grepl("pfos", pfas) ~ "PFOS",
+      grepl("pfoa", pfas) ~ "PFOA",
+      grepl("pfda", pfas) ~ "PFDA",
+      grepl("pfhpa", pfas) ~ "PFHpA",
+      grepl("pfhps", pfas) ~ "PFHpS",
+      grepl("pfhxs", pfas) ~ "PFHxS",
+      grepl("pfna", pfas) ~ "PFNA",
+      grepl("pfuna", pfas) ~ "PFUnA",
+      grepl("nmefosaa", pfas) ~ "NMeFOSAA",
+      TRUE ~ toupper(pfas)) %>% 
+        as.factor() %>% 
+        fct_relevel(., 
+                    "PFUnA", 
+                    "PFDA", 
+                    "PFNA", 
+                    "PFOA", 
+                    "PFHpA",
+                    "PFOS", 
+                    "PFHpS",
+                    "PFHxS",
+                    "NMeFOSAA")) 
+  
+  if(include_asterisk == TRUE){ 
+    pfas2 <-  x %>%
+      mutate(pfas2 = case_when(
+        grepl("pfos", pfas) ~ "PFOS",
+        grepl("pfoa", pfas) ~ "PFOA",
+        grepl("pfda", pfas) ~ "PFDA",
+        grepl("pfhpa", pfas) ~ "PFHpA",
+        grepl("pfhps", pfas) ~ "PFHpS",
+        grepl("pfhxs", pfas) ~ "PFHxS",
+        grepl("pfna", pfas) ~ "PFNA",
+        grepl("pfuna", pfas) ~ "PFUnA",
+        grepl("nmefosaa", pfas) ~ "NMeFOSAA",
+        TRUE ~ toupper(pfas)) %>% 
+          as.factor() %>% 
+          fct_relevel(., 
+                      "PFUnA", 
+                      "PFDA", 
+                      "PFNA", 
+                      "PFOA", 
+                      "PFHpA",
+                      "PFOS", 
+                      "PFHpS",
+                      "PFHxS",
+                      "NMeFOSAA")) 
+  }
+  
+  if(arrange_by_class == TRUE){ 
+    pfas2 <-  pfas2 %>% 
+      left_join(lod, by = "pfas") %>% 
+      mutate(pfas2 = fct_reorder(pfas2, order_by_class))
+  }
+  
+  return(pfas2$pfas2)
+}
+

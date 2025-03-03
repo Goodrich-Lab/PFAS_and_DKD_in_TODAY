@@ -1,0 +1,172 @@
+---
+title: 'Today project'
+author: "Hongxu Wang"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+<style type="text/css">
+body{
+font-size: 12pt;
+}
+</style>
+
+```{r exposure outcome setup, include=FALSE}
+source(here::here("!libraries.R"))
+source(here::here("!directories.R"))
+source(here::here("!load_clean_data.R"))
+source(here::here("!functions.R"))
+
+options(knitr.table.format = "html")
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Characteristics
+```{r covars}
+data_raw$monthstomic = (data_raw$daystomic/365)*12
+# data_raw$
+table1::table1(~sex + agebase + bmi + serum_creat + eGFR + 
+                 est_creat_clear + hb_a1c + 
+                 dxtime + monthstomic+tx|mic, 
+               data = data_raw)
+```
+
+## Summary of PFAS
+```{r summary of PFAS}
+pfas_summary <- original_data %>% 
+  dplyr::select(pfas_pfuna,pfas_pfda, pfas_pfna,
+         pfas_pfoa,pfas_pfhpa,pfas_nmefosaa,
+         pfas_pfos, pfas_pfhps, pfas_pfhxs, pfas_nmefosaa) %>%
+  pivot_longer(cols = everything()) %>%
+  group_by(name) %>%
+  summarise(GM = fungm(value),
+            percentile_50 = qntle_fxn(value, .50),
+            percentile_75 = qntle_fxn(value, .75),
+             percentile_90 = qntle_fxn(value, .9))
+
+```
+
+## Correlation of PFAS
+```{r correlation of PFAS}
+pfas_mat_for_cor <- original_data %>% 
+  dplyr::select(pfas_pfuna,pfas_pfda, pfas_pfna,
+         pfas_pfoa,pfas_pfhpa,pfas_nmefosaa,
+         pfas_pfos, pfas_pfhps, pfas_pfhxs, pfas_nmefosaa) %>%
+  as.data.frame()
+
+# Run Correlation Matrix
+cor_matrix <- polycor::hetcor(pfas_mat_for_cor)
+cor_matrix$spearman <- cor(pfas_mat_for_cor, method = "spearman")
+
+# Get correlation Matrix and  pivot longer
+cor_matrix_df_1 <- as_tibble(cor_matrix$spearman) %>% 
+  mutate(pfas= names(cor_matrix$correlations[,1])) %>% 
+  select(pfas, everything()) 
+
+# Pivot longer
+cor_matrix_df_1 <- cor_matrix_df_1 %>% 
+  pivot_longer(names_to = "pfas_2",
+               values_to = "correlation",
+               cols = colnames(cor_matrix_df_1)[-1])
+
+# Get correlation method
+cor_method_df_1 <- as_tibble(cor_matrix$type) %>% mutate(across(everything(), 
+                                                                              ~str_replace(., "Pearson", "Spearman")))
+
+colnames(cor_method_df_1) <- names(cor_matrix$correlations[,1])
+
+# Pivot longer
+cor_method_df_2 <- cor_method_df_1 %>% 
+  mutate(pfas = names(cor_matrix$spearman[,1])) %>% 
+  select(pfas, everything()) %>% 
+  pivot_longer(., 
+               names_to = "pfas_2",
+               values_to = "method",
+               cols = names(cor_matrix$spearman[,1]))
+
+# Combine p values and method
+cor_matrix_df_2 <- left_join(cor_matrix_df_1, 
+                                   cor_method_df_2)
+
+# Calculate p-values 
+cor_matrix_df_2 <- cor_matrix_df_2 %>% 
+  rowwise() %>% 
+  mutate(p = cor_to_p(cor = correlation, 
+                      n = length(unique(original_data$sample_id)), 
+                      method = method)$p) %>% 
+  as_tibble()
+
+
+# Relevel factors (This gives a warning because we dont include PFHxA in analysis (100% < LOD)
+cor_matrix_df_3 <- cor_matrix_df_2 %>%
+  mutate(pfas_names_1 = rename_pfas_new(pfas,
+                                    include_asterisk = FALSE, 
+                                    arrange_by_class = FALSE), 
+         pfas_names_2 = rename_pfas_new(pfas_2, 
+                                    include_asterisk = FALSE,
+                                    arrange_by_class = FALSE))
+
+## Reorder cor matrix for fig ----------------
+cor_matrix_df_4 <- cor_matrix_df_3 %>% 
+  # left_join(lod, by = "pfas") %>% 
+  arrange(pfas_names_1, pfas_names_2) %>%
+  group_by(pfas_names_1) %>% 
+  mutate(group_1 = row_number()) %>% 
+  ungroup() %>%
+  group_by(pfas_names_2) %>% 
+  mutate(group_2 = row_number()) %>% 
+  ungroup() %>% 
+  mutate(correlation_2 = if_else(group_2 <= group_1, 0, correlation),
+         p_2 = if_else(group_2 <= group_1, NA_real_, p) %>% 
+           p.adjust(., method = "fdr"),
+         sig = if_else(p_2 < 0.05, "*", "") %>% 
+           if_else(group_2 <= group_1, "", .), 
+         correlation_3 = 
+           if_else(group_2 <= group_1, 
+                   "", 
+                   str_c(formatC(correlation, format = "f", digits = 2), 
+                         sig)))
+
+
+## Plot legacy Correlation Plot ----------------
+(corplot <- cor_matrix_df_4 %>% ggplot(aes(x = pfas_names_1, 
+                             y = pfas_names_2, 
+                             fill = correlation_2, 
+                             label = correlation_3)) + 
+   geom_tile(color = "white") + 
+   geom_text() + 
+   scale_fill_gradient2(limit = c(0,1), 
+                        low = "blue", 
+                        high =  "red", 
+                        mid = "white",
+                        midpoint = 0, 
+                        name= "Spearman\nCorrelation\nCoefficient") + 
+   ggthemes::theme_tufte(base_size = 17) +
+   theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+         axis.title.x = element_blank(), 
+         axis.title.y = element_blank()))
+
+# Get info about correlation structure 
+cor_matrix_df_4 %>% 
+  filter(method != "", 
+         correlation_2 != 0) %>% 
+  summarise(median_cor = median(correlation_2 ), 
+            min_cor = min(correlation_2), 
+            max_cor = max(correlation_2), 
+            length(correlation_2))
+
+
+# Save Figure
+ggsave(corplot,
+       filename = fs::path(dir_figure,
+                           "correlation_plot.jpeg"),
+       width = 8,
+       height = 6)
+```
+

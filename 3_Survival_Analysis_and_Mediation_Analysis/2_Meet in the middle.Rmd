@@ -142,80 +142,12 @@ mim_res_temp <- mim_res_temp |>
 
 # Clean Gene Names
 mim_res_temp <- mim_res_temp |>
-  tidylog::mutate(EntrezGeneSymbol = str_remove(EntrezGeneSymbol, "_2") |> 
+  tidylog::mutate(EntrezGeneSymbol = str_remove(EntrezGeneSymbol, "_2") |>
                     str_remove("_4"))
 
 # seq.19570.12 seq.8355.80 pass FDR for PFNA ~ features
 write_csv(mim_res_temp, 
           fs::path(dir_results, 
                    "meet_in_middle_res_020924.csv")) 
-```
-
-# Mediator-outcome regressions adjusted by PFNA
-* Mediators : sig mediators from meet in the middle
-```{r mediator outcome reg adjusted by PFNA}
-# 2) Mediator-outcome regressions ----------------
-ind_vars <- tibble(exposure = omic_names)
-dep_vars <- tibble(time = c("daystomic"), event = c("mic"))
-
-# Get exposure and outcome combinations
-mo_comb <- list(omic = ind_vars$exposure, event = dep_vars$event) %>%
-  cross_df() %>% 
-  left_join(dep_vars, by = "event")
-
-# Create combination of exposures and outcomes
-mo_res_models <- mo_comb %>%
-  mutate(covar = str_c(covars, collapse = "+"),
-         formula = str_c("Surv(", time, ",", event, ")", "~", "pfas_pfna", "+", omic, "+", covar))
-
-# Run all models
-mo_res_models$output <- map(mo_res_models$formula,
-                            ~coxph(as.formula(.),
-                                   data = data_scaled) %>%
-                              tidy(., conf.int = TRUE))
-
-# Modify output
-mo_res_models <- mo_res_models %>%
-  unnest(output) %>%
-  filter(grepl("seq", term)|grepl("met",term))%>%
-  mutate(HR = exp(estimate),
-         exp_conf_high = exp(conf.high),
-         exp_conf_low = exp(conf.low)) 
-
-## A. Clean results ----
-# Select key columns, filter significant features from meet in the middle
-result_mo_sub <- mo_res_models %>% 
-  tidylog::filter(term %in% mim_res_temp$feature_name) %>%
-  dplyr::select(omic, estimate, conf.low, conf.high, p.value, 
-                HR, exp_conf_low, exp_conf_high) |> 
-  rename(feature_name = omic, 
-         estimate_mo = estimate, 
-         conf.low_mo = conf.low, 
-         conf.high_mo = conf.high,
-         p.value_mo = p.value,
-         HR_mo = HR,
-         exp_conf_low_mo = exp_conf_low,
-         exp_conf_high_mo = exp_conf_high)
-
-
-# 3) Combine and analyze meet in middle --------------------
-# Combine em and mo
-mim_res <- tidylog::inner_join(result_em_sig, 
-                               result_mo_sub, 
-                               by = "feature_name")
-
-# examine meet in middle proteins
-mim_res1 <- mim_res |> 
-  mutate(emxmo = estimate_em*estimate_mo, 
-         max_p = if_else(p_value_em < p.value_mo, p.value_mo, p_value_em))
-
-## Combine with proteomics metadata ------
-mim_res2 <- mim_res1 %>% 
-  tidylog::left_join(prot_metadata, by = c("feature_name" = "AptName")) |> 
-  tidylog::filter(Organism == "Human") 
-
-## check if em * mo are all positive
-# mim_res2$emxmo
-
 ```
 

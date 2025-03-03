@@ -4,10 +4,19 @@
 ## A. Read in data --------
 original_data <- read_rds(fs::path(dir_data, "clean_data", "TODAY_complete_data_0417.RDS"))
 
+
+# load protein meta data
+meta_pro <- read_csv(fs::path(dir_data, "clean_data", "Proteome metadata.csv"))%>%
+  filter(Organism == "Human")
+
+
 # Set var names
 pfas_names <- original_data |> tidylog::select(contains("pfas_")) |> colnames()
 met_names <- original_data |> tidylog::select(contains("met_")) |> colnames()
-prot_names <- original_data |> tidylog::select(contains("seq")) |> colnames()
+prot_names <- original_data |> tidylog::select(all_of(meta_pro$AptName)) |> colnames()
+
+
+
 
 # Get informative metabolites/protein names
 omic_names <- c(prot_names, met_names)
@@ -96,11 +105,12 @@ data_analysis <- original_data %>%
                                          include.lowest = TRUE
               )))) %>%
   mutate(pfas_pfda_detected = ifelse(pfas_pfda<0.05|pfas_pfda==0.2/sqrt(2), 1, 2)) %>%
-  mutate_at(.vars = vars(c("pfas_pfhpa","pfas_pfuna")),
-            .funs = list(detected = ~ifelse(.<0.05|.==0.1/sqrt(2), 1, 2))) %>%
+  mutate(pfas_pfuna_detected = ifelse(pfas_pfuna<0.05|pfas_pfuna==0.1/sqrt(2), 1, 2)) %>%
+  # mutate_at(.vars = vars(c("pfas_pfhpa","pfas_pfuna")),
+  #           .funs = list(detected = ~ifelse(.<0.05|.==0.1/sqrt(2), 1, 2))) %>%
   tidylog::mutate_at(.vars = vars(c("pfas_pfhps", "pfas_pfhpa")), #, 
-                     .funs = list(dichotomous = ~cut(., 
-                                                     quantile(., probs = seq(0, 1, .5)), 
+                     .funs = list(tert = ~cut(., 
+                                                     quantile(., probs = seq(0, 1, 1/3)), 
                                                      include.lowest = TRUE) %>% 
                                     as.integer()))
 
@@ -108,17 +118,22 @@ data_analysis <- original_data %>%
 burden_score_pfas <- data_analysis %>% 
   dplyr::select(contains("detected"), 
                 contains("quartile"), 
-                contains("dichotomous"), 
-                -pfas_pfhpa_dichotomous) %>% 
+                contains("tert")) %>% 
   as.data.frame()
+
 # Select PFCAs
 burden_score_pfcas <- burden_score_pfas |> 
-  dplyr::select(pfas_pfhpa_detected, pfas_pfoa_quartile, pfas_pfna_quartile, 
-                pfas_pfda_detected, pfas_pfuna_detected)
+  dplyr::select(pfas_pfoa_quartile, 
+                pfas_pfna_quartile, 
+                pfas_pfda_detected, 
+                pfas_pfuna_detected, 
+                pfas_pfhpa_tert)
 
 # Select PFSAs
 burden_score_pfsas <- burden_score_pfas |> 
-  dplyr::select(pfas_pfos_quartile, pfas_pfhxs_quartile, pfas_pfhps_dichotomous)
+  dplyr::select(pfas_pfos_quartile, 
+                pfas_pfhxs_quartile, 
+                pfas_pfhps_tert)
 
 ## B. Calculate Scores ------
 eap.pfas <- ltm::factor.scores(grm(burden_score_pfas), 

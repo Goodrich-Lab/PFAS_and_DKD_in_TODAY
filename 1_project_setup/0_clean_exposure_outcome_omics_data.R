@@ -50,7 +50,7 @@ pfas_data <- read_csv(fs::path(dir_data, "raw_data",
                       na = c("ND", "")) %>% 
   janitor::clean_names() |>
   tidylog::filter(!is.na(client_sample_id)) |>
-  janitor::remove_empty(which = c("rows", "cols")) |>
+  # janitor::remove_empty(which = c("rows", "cols")) |>
   janitor::remove_constant() 
 
 # Two samples were entered incorrectly: 
@@ -77,7 +77,7 @@ table(pfas_data_reduced$analyte)
 
 ## Get PFAS Metadata -----
 pfas_metadata <- pfas_data_reduced |>
-  select(lab_sample_id, analyte, cas, result)  |>
+  tidylog::select(lab_sample_id, analyte, cas, result)  |>
   group_by(analyte) |>
   summarise(cas = cas[1], 
             n_na = sum(is.na(result)),
@@ -115,12 +115,13 @@ write_csv(pfas_metadata, fs::path(dir_data, "clean_data", "PFAS metadata.csv"))
 
 # Join long data with metadata, and remove those which are not in metadata
 pfas_data_reduced_2 <- pfas_data_reduced |> 
-  tidylog::left_join(pfas_metadata |> select(analyte, pfas_name)) |>
+  tidylog::left_join(pfas_metadata |> 
+                       tidylog::select(analyte, pfas_name)) |>
   tidylog::filter(!is.na(pfas_name))
 
 ## Pivot PFAS data wider ----
 pfas <- pfas_data_reduced_2 |>  
-  select(client_sample_id, pfas_name, pfas_imputed) |>
+  tidylog::select(client_sample_id, pfas_name, pfas_imputed) |>
   tidylog::pivot_wider(id_cols = c(client_sample_id), 
                        names_from = pfas_name, 
                        values_from = pfas_imputed) |>
@@ -130,8 +131,6 @@ pfas <- pfas_data_reduced_2 |>
 
 # Save PFAS data 
 write_csv(pfas, fs::path(dir_data, "clean_data", "TODAY_PFAS.csv"))
-
-
 
 # Combine all data ------
 full_data <- outcomes_only |>
