@@ -1,0 +1,428 @@
+---
+title: "SC_PFNA_DEG"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_notebook
+---
+
+**R v4.4.1 & Seurat v5.1**
+**Open the project "cm_wd".** 
+
+<br>
+
+### Where I am
+
+```{r}
+#Sanity check where here is located
+here::here()
+```
+
+### Set working environment
+
+```{r results=FALSE}
+# load libraries from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "00_project_setup", 
+           "!libraries.r")
+  )
+
+# load directory path from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "00_project_setup", 
+           "!directories.r")
+  )
+```
+
+
+### Data directory
+
+```{r}
+dir_06_seurat_objects
+```
+
+### Results directory
+
+```{r}
+# for seurat object
+dir_07_seurat_objects
+
+# for results
+dir_07_results
+```
+
+### Sample info
+
+```{r results=FALSE}
+
+library(readr)
+sample_info <- read_csv(fs::path(dir_data, 
+                                "cellranger_output",
+                                "sample_info.csv"))
+
+sample_info
+```
+
+<br><br><br>
+
+## Load merged.filtered data
+```{r}
+ks.merged.filtered <- readRDS(paste(fs::path(dir_06_seurat_objects), "/ks.PFNA.merged.filtered.rds", sep = ""))
+```
+
+<br>
+
+## Join data
+```{r}
+SO <- JoinLayers(ks.merged.filtered)
+```
+
+```{r}
+ks.merged.filtered
+
+SO
+```
+
+```{r}
+head(SO@meta.data)
+tail(SO@meta.data)
+```
+
+<br> 
+
+## Add Metadata
+```{r}
+SO@meta.data <- SO@meta.data %>%
+  mutate(class.PFAS = dplyr::case_when(
+    Sample == "KS-01"  ~ "Veh",
+    Sample == "KS-02"  ~ "PFNA",
+    Sample == "KS-04"  ~ "Veh",
+    Sample == "KS-05"  ~ "PFNA",
+  ))
+ 
+SO@meta.data <- SO@meta.data %>%
+  mutate(class.time = dplyr::case_when(
+    Sample == "KS-01"  ~ "1_Week",
+    Sample == "KS-02"  ~ "1_Week",
+    Sample == "KS-04"  ~ "2_Weeks",
+    Sample == "KS-05"  ~ "2_Weeks",
+  ))
+
+# set an order in Condition
+SO$Condition <- factor(SO$Condition, 
+                       levels = c("CTR_wk1","PFNA_wk1","CTR_wk2","PFNA_wk2"))
+```
+
+<br>
+
+```{r}
+table(SO$Condition)
+```
+
+<br>
+
+```{r fig.asp=0.6}
+p1 <- DimPlot(SO, group.by = "cell_type", label = TRUE) + NoLegend()
+p2 <- DimPlot(SO, group.by = "Condition")
+
+p1+p2
+```
+
+<br>
+
+## Save seurat object
+```{r}
+# save object
+saveRDS(SO, paste0(dir_07_seurat_objects, "/ks.PFNA.merged.filtered.joined.rds"))
+```
+
+
+<br><br>
+
+## Proportion plots {.tabset}
+
+### By Sample
+```{r}
+# set cell type order
+cluster_order <- match(levels(SO@meta.data[["cell_type"]]), metaLevels("cell_type", SO))
+
+dittoSeq::dittoBarPlot(SO, var = "cell_type", group.by = "Sample", var.labels.reorder = cluster_order)
+```
+
+### By Duration
+```{r}
+dittoSeq::dittoBarPlot(SO, var = "cell_type", group.by = "class.time", var.labels.reorder = cluster_order)
+```
+
+### By Treatment
+```{r}
+dittoSeq::dittoBarPlot(SO, var = "cell_type", group.by = "class.PFAS", var.labels.reorder = cluster_order)
+```
+
+##
+
+<br>
+
+## Cluster markers
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+Idents(SO) <- "cell_type"
+KS.cluster.markers <- FindAllMarkers(SO, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, verbose = FALSE)
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center', fig.width = 7, fig.height= 8}
+# heatmap with top5
+KS.cluster.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 5, wt = avg_log2FC) -> top5
+
+
+DoHeatmap(SO, features = top5$gene) + NoLegend()
+
+# violin plot with top2
+KS.cluster.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 2, wt = avg_log2FC) -> top2
+
+VlnPlot(SO, 
+        features = unique(top2$gene),
+        stack = TRUE, 
+        flip = TRUE,
+        pt.size = 0)+
+        NoLegend()
+
+# list of top10
+t1 <- KS.cluster.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10)
+   
+t1
+
+DoHeatmap(SO, features = t1$gene) + NoLegend()
+
+```
+
+
+
+
+<br><br><br>
+
+## Comparison
+```
+Week1_Veh vs. Week1_PFNA for each cluster
+Week2_Veh vs. Week2_PFNA for each cluster
+Week1_Veh vs. Week2_Veh for each cluster
+``` 
+
+
+## 1. Week1_PFNA vs. Week1_Veh 
+
+```{r}
+cluster.final <- unique(SO$cell_type)
+
+for (i in cluster.final) {
+
+## DE markers per class.jwn.2 (between samples) ##   
+  # subset by final cluster annotation "i" cells from data.integrated
+  Idents(SO) <- "cell_type"
+  cluster.subset <- subset(SO, idents = i)
+  
+  # find marker between samples
+  Idents(cluster.subset) <- "Condition"
+  de.markers <- FindMarkers(cluster.subset, 
+                            ident.1 = "PFNA_wk1",       # Case
+                            ident.2 = "CTR_wk1",        # Control  
+                            logfc.threshold = .25, min.pct = .1)   # Jonathans setup  
+  
+  de.markers <- de.markers[order(de.markers[,"avg_log2FC"], decreasing = TRUE),]  # Jonathans setup  
+
+  assign(paste0("PFNAvsCTR_week1_",i,".de.markers"), de.markers)
+  
+  write.csv(de.markers, file = paste0(dir_07_results, "/PFNAvsCTR_week1_", i, ".de.markers.csv"))
+  
+}
+```
+
+### DEG list {.tabset}
+```
+Positive logFC: High expression in case 
+Negative logFC: High expression in control
+```
+
+#### Epithelial_1
+```{r}
+datatable(`PFNAvsCTR_week1_Epithelial_1.de.markers`)
+```
+
+#### Epithelial_2
+```{r}
+datatable(PFNAvsCTR_week1_Epithelial_2.de.markers)
+```
+
+#### Fibroblasts
+```{r}
+datatable(`PFNAvsCTR_week1_Fibroblasts.de.markers`)
+```
+
+#### Mesangial_Cells_1
+```{r}
+datatable(`PFNAvsCTR_week1_Mesangial_Cells_1.de.markers`)
+```
+
+#### Mesangial_Cells_2
+```{r}
+datatable(`PFNAvsCTR_week1_Mesangial_Cells_2.de.markers`)
+```
+
+#### Cycling
+```{r}
+datatable(PFNAvsCTR_week1_Cycling.de.markers)
+```
+
+##
+
+<br>
+
+## 2. Week2_PFNA vs. Week2_Veh 
+
+```{r}
+cluster.final <- unique(SO$cell_type)
+
+for (i in cluster.final) {
+
+## DE markers per class.jwn.2 (between samples) ##   
+  # subset by final cluster annotation "i" cells from data.integrated
+  Idents(SO) <- "cell_type"
+  cluster.subset <- subset(SO, idents = i)
+  
+  # find marker between samples
+  Idents(cluster.subset) <- "Condition"
+  de.markers <- FindMarkers(cluster.subset, 
+                            ident.1 = "PFNA_wk2",       # Case
+                            ident.2 = "CTR_wk2",        # Control  
+                            logfc.threshold = .25, min.pct = .1)   # Jonathans setup
+  
+  de.markers <- de.markers[order(de.markers[,"avg_log2FC"], decreasing = TRUE),]  # Jonathans setup  
+
+  assign(paste0("PFNAvsCTR_week2_",i,".de.markers"), de.markers)
+  
+  write.csv(de.markers, file = paste0(dir_07_results, "/PFNAvsCTR_week2_", i, ".de.markers.csv"))
+  
+}
+```
+
+### DEG list {.tabset}
+```
+Positive logFC: High expression in case 
+Negative logFC: High expression in control
+```
+
+#### Epithelial_1
+```{r}
+datatable(`PFNAvsCTR_week2_Epithelial_1.de.markers`)
+```
+
+#### Epithelial_2
+```{r}
+datatable(PFNAvsCTR_week2_Epithelial_2.de.markers)
+```
+
+#### Fibroblasts
+```{r}
+datatable(PFNAvsCTR_week2_Fibroblasts.de.markers)
+```
+
+#### Mesangial_Cells_1
+```{r}
+datatable(`PFNAvsCTR_week2_Mesangial_Cells_1.de.markers`)
+```
+
+#### Mesangial_Cells_2
+```{r}
+datatable(`PFNAvsCTR_week2_Mesangial_Cells_2.de.markers`)
+```
+
+#### Cycling
+```{r}
+datatable(PFNAvsCTR_week2_Cycling.de.markers)
+```
+
+##
+
+<br>
+
+## 3. Week2_Veh  vs. Week1_Veh 
+
+```{r}
+cluster.final <- unique(SO$cell_type)
+
+for (i in cluster.final) {
+
+## DE markers per class.jwn.2 (between samples) ##   
+  # subset by final cluster annotation "i" cells from data.integrated
+  Idents(SO) <- "cell_type"
+  cluster.subset <- subset(SO, idents = i)
+  
+  # find marker between samples
+  Idents(cluster.subset) <- "Condition"
+  de.markers <- FindMarkers(cluster.subset, 
+                            ident.1 = "CTR_wk2",       # Case
+                            ident.2 = "CTR_wk1",        # Control  
+                            logfc.threshold = .25, min.pct = .1)   # Jonathans setup  
+  
+  de.markers <- de.markers[order(de.markers[,"avg_log2FC"], decreasing = TRUE),]  # Jonathans setup  
+  
+  assign(paste0("CTR_week2vsCTR_week1_",i,".de.markers"), de.markers)
+  
+  write.csv(de.markers, file = paste0(dir_07_results, "/CTR_week2vsCTR_week1_", i, ".de.markers.csv"))
+  
+}
+```
+
+### DEG list {.tabset}
+```
+Positive logFC: High expression in case 
+Negative logFC: High expression in control
+```
+
+#### Epithelial_1
+```{r}
+datatable(`CTR_week2vsCTR_week1_Epithelial_1.de.markers`)
+```
+
+#### Epithelial_2
+```{r}
+datatable(CTR_week2vsCTR_week1_Epithelial_2.de.markers)
+```
+
+#### Fibroblasts
+```{r}
+datatable(CTR_week2vsCTR_week1_Fibroblasts.de.markers)
+```
+
+#### Mesangial_Cells_1
+```{r}
+datatable(`CTR_week2vsCTR_week1_Mesangial_Cells_1.de.markers`)
+```
+
+#### Mesangial_Cells_2
+```{r}
+datatable(`CTR_week2vsCTR_week1_Mesangial_Cells_2.de.markers`)
+```
+
+#### Cycling
+```{r}
+datatable(CTR_week2vsCTR_week1_Cycling.de.markers)
+```
+
+##
+
+<br>
+
+## Session info
+```{r}
+sessionInfo()
+```
+
+
+

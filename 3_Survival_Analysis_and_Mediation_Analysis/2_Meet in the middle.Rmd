@@ -18,10 +18,10 @@ font-size: 12pt;
 </style>
 
 ```{r exposure outcome setup, include=FALSE}
-source(here::here("!libraries.R"))
-source(here::here("!directories.R"))
-source(here::here("!load_clean_data.R"))
-source(here::here("!functions.R"))
+source(here::here("1_project_setup/!libraries.R"))
+source(here::here("1_project_setup/!directories.R"))
+source(here::here("1_project_setup/!load_clean_data.R"))
+source(here::here("1_project_setup/!functions.R"))
 
 options(knitr.table.format = "html")
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
@@ -52,8 +52,6 @@ result_em <- result_em |>
          adjusted_pval = p.adjust(p_value, method = "fdr"),
          sig_fdr = if_else(adjusted_pval < 0.2, "Sig", "Not sig")) |> 
   ungroup()
-
-# Check seq.8032.23 (MCCD1)
 
 ## A. Clean results -----
 # get name of all sig proteins
@@ -148,6 +146,6 @@ mim_res_temp <- mim_res_temp |>
 # seq.19570.12 seq.8355.80 pass FDR for PFNA ~ features
 write_csv(mim_res_temp, 
           fs::path(dir_results, 
-                   "meet_in_middle_res_020924.csv")) 
+                   "meet_in_middle_res_sig.csv")) 
 ```
 

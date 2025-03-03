@@ -1,0 +1,204 @@
+---
+title: "SC_PFNA_Merge_Annotation"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_notebook
+---
+
+**R v4.4.1 & Seurat v5.1**
+**Open the project "cm_wd".** 
+
+<br>
+
+### Where I am
+
+```{r}
+#Sanity check where here is located
+here::here()
+```
+
+### Set working environment
+
+```{r results=FALSE}
+# load libraries from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "00_project_setup", 
+           "!libraries.r")
+  )
+
+# load directory path from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "00_project_setup", 
+           "!directories.r")
+  )
+```
+
+
+### Data directory
+
+```{r}
+dir_01_seurat_objects
+```
+
+### Results directory (to save seurat objects)
+
+```{r}
+dir_06_seurat_objects
+```
+
+### Sample info
+
+```{r results=FALSE}
+
+library(readr)
+sample_info <- read_csv(fs::path(dir_data, 
+                                "cellranger_output",
+                                "sample_info.csv"))
+
+sample_info
+```
+
+<br><br><br>
+
+## Merge objects
+```{r}
+# load objects
+sample.name <- sample_info$Sample_ID
+
+for (i in sample.name){
+  
+  obj <- readRDS(paste(fs::path(dir_01_seurat_objects), "/", i, ".rds", sep = ""))
+  
+  assign(i, obj)
+}
+
+# merge objects
+ks.merged <- merge(`KS-01`, y = c(`KS-02`,`KS-04`,`KS-05`), add.cell.ids = sample_info$Sample_ID[c(1,2,4,5)], project = "PFAS_kidney_organoid")
+ks.merged
+```
+
+```{r}
+# change meta data orig.ident 'SeuratProject' to sample name
+ks.merged$orig.ident <- ks.merged$Sample
+
+# remove old data from previous step
+ks.merged$RNA_snn_res.0 <- NULL
+ks.merged$RNA_snn_res.0.03 <- NULL
+ks.merged$RNA_snn_res.0.05 <- NULL
+ks.merged$RNA_snn_res.0.1 <- NULL
+ks.merged$RNA_snn_res.0.2 <- NULL
+ks.merged$RNA_snn_res.0.3 <- NULL
+ks.merged$RNA_snn_res.0.4 <- NULL
+ks.merged$RNA_snn_res.0.5 <- NULL
+ks.merged$RNA_snn_res.0.6 <- NULL
+ks.merged$RNA_snn_res.0.7 <- NULL
+ks.merged$RNA_snn_res.0.8 <- NULL
+ks.merged$RNA_snn_res.0.9 <- NULL
+ks.merged$RNA_snn_res.1 <- NULL
+ks.merged$seurat_clusters <- NULL
+```
+
+```{r}
+# head and tail of cell name
+head(ks.merged@meta.data)
+tail(ks.merged@meta.data)
+unique(ks.merged$Sample)
+```
+
+```{r}
+# check basic qc
+Idents(ks.merged) <- "orig.ident"
+VlnPlot(ks.merged, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), pt.size = 0, ncol = 3)
+
+Idents(ks.merged) <- "class.jwn"
+VlnPlot(ks.merged, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), pt.size = 0.01, ncol = 3)
+```
+
+## Filtering nFeature
+```{r}
+ks.merged.filtered <- subset(ks.merged, subset = nFeature_RNA > 2000)
+ks.merged.filtered
+```
+
+```{r}
+# check basic qc
+Idents(ks.merged.filtered) <- "orig.ident"
+VlnPlot(ks.merged.filtered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), pt.size = 0, ncol = 3)
+
+Idents(ks.merged.filtered) <- "class.jwn"
+VlnPlot(ks.merged.filtered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), pt.size = 0.01, ncol = 3)
+```
+
+## Standerd analysis over the merged & filtered object
+```{r}
+ks.merged.filtered <- NormalizeData(ks.merged.filtered)
+ks.merged.filtered <- FindVariableFeatures(ks.merged.filtered)
+ks.merged.filtered <- ScaleData(ks.merged.filtered)
+ks.merged.filtered <- RunPCA(ks.merged.filtered)
+ks.merged.filtered <- FindNeighbors(ks.merged.filtered, dims = 1:30, reduction = "pca")
+ks.merged.filtered <- FindClusters(ks.merged.filtered, resolution = 0.1, cluster.name = "unintegrated_clusters")
+ks.merged.filtered <- RunUMAP(ks.merged.filtered, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+```
+
+```{r fig.asp=0.5}
+DimPlot(ks.merged.filtered, reduction = "umap.unintegrated", group.by = c("class.jwn", "unintegrated_clusters"))
+```
+
+```{r fig.asp=1.2}
+DimPlot(ks.merged.filtered, reduction = "umap.unintegrated", split.by = "Sample", group.by = "unintegrated_clusters", ncol = 2)
+```
+
+```{r}
+FeaturePlot(ks.merged.filtered, features = "nFeature_RNA")
+```
+
+## Cell type renaming
+```{r}
+ks.merged.filtered@meta.data <- ks.merged.filtered@meta.data %>% 
+  mutate(cell_type = dplyr::case_when(
+    seurat_clusters == 0  ~ "Fibroblasts",
+    seurat_clusters == 1  ~ "Epithelial_2",
+    seurat_clusters == 2  ~ "Epithelial_1",
+    seurat_clusters == 3  ~ "Mesangial_Cells_1",
+    seurat_clusters == 4  ~ "Cycling",
+    seurat_clusters == 5  ~ "Mesangial_Cells_2"
+ ))
+
+# set an order 
+ks.merged.filtered$cell_type <- factor(ks.merged.filtered$cell_type, 
+                                          levels = c("Epithelial_1", 
+                                                     "Epithelial_2", 
+                                                     "Fibroblasts",
+                                                     "Mesangial_Cells_1",
+                                                     "Mesangial_Cells_2",
+                                                     "Cycling"))
+
+table(ks.merged.filtered$cell_type)
+```
+
+```{r fig.asp=1}
+DimPlot(ks.merged.filtered, group.by = "cell_type", label = TRUE) + NoLegend()
+```
+
+<br>
+
+## Save objects
+```{r}
+# merged
+saveRDS(ks.merged, paste0(dir_06_seurat_objects, "/ks.PFNA.merged.rds"))
+
+# merged & filtered (nFeature_RNA > 2000)
+saveRDS(ks.merged.filtered, paste0(dir_06_seurat_objects, "/ks.PFNA.merged.filtered.rds"))
+```
+
+<br>
+
+## Session info
+```{r}
+sessionInfo()
+```
+
+
+
+

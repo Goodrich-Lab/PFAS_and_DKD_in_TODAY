@@ -1,0 +1,510 @@
+---
+title: "SC_QC_Ambient_Doublet_Removal"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_notebook
+---
+
+**R v4.4.1 & Seurat v5.1**
+**Open the project "cm_wd".** 
+
+Code is based on Jonathan's "IRI12h1_1_Ambient RNA and Doublet Removal_template.Rmd". Run 6 samples using this format. Each run result is saved as sample_name.html, and each final (cleaned) seurat object is saved in results directory.
+
+<br>
+
+### Where I am
+
+```{r}
+#Sanity check where here is located
+here::here()
+```
+
+### Set working environment
+
+```{r}
+# load libraries from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "00_project_setup", 
+           "!libraries.r")
+  )
+
+# load directory path from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "00_project_setup", 
+           "!directories.r")
+  )
+```
+
+
+### Data directory
+
+```{r}
+dir_cellranger_out
+```
+
+### Results directory (to save seurat objects)
+
+```{r}
+dir_01_seurat_objects
+```
+
+### Sample info
+
+```{r results=FALSE}
+
+library(readr)
+sample_info <- read_csv(fs::path(dir_data, 
+                                "cellranger_output",
+                                "sample_info.csv"))
+
+sample_info
+```
+
+<br><br><br>
+
+# Sample & Condition
+
+```{r}
+sample.num <- 6   # change
+
+Sample <- paste(sample_info[sample.num,1])
+Sample
+Condition <- paste(sample_info[sample.num,2])
+Condition
+```
+
+<br>
+
+# SoupX for Ambient RNA Removal
+
+[(Young and Behjati, 2020)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7763177/)
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+# Load data and estimate soup profile
+tod = Read10X_h5(fs::path(dir_cellranger_out, Sample, "/raw_feature_bc_matrix.h5")) #Change
+toc = Read10X_h5(fs::path(dir_cellranger_out, Sample, "/filtered_feature_bc_matrix.h5")) #Change
+sc = SoupChannel(tod,toc)
+
+#Make the Seurat object from the filtered control data
+SO <- Read10X_h5(fs::path(dir_cellranger_out, Sample, "/filtered_feature_bc_matrix.h5"))#Change 
+SO <- CreateSeuratObject(counts = SO, project = "PFAS_kidney_organoid")  #Change
+ 
+#Cluster the cells with Seurat
+SO <- SCTransform(SO, verbose = F)
+SO <- RunPCA(SO, verbose = F)
+SO <- RunUMAP(SO, dims = 1:30, verbose = F)
+SO <- FindNeighbors(SO, dims = 1:30, verbose = F)
+SO <- FindClusters(SO, verbose = T)
+ 
+meta <- SO@meta.data
+umap <- SO@reductions$umap@cell.embeddings
+clusters <- setNames(meta$seurat_clusters, rownames(meta))
+
+#Sanity Check
+length(clusters) #should be equal to nrow(sc$metaData)
+nrow(sc$metaData)
+
+sc <- setClusters(sc, clusters)
+sc <- setDR(sc, umap)
+
+#Estimate rho
+sc = autoEstCont(sc)
+
+#Clean the data
+SO_out = adjustCounts(sc)
+ 
+#Create a new Seurat Object out of the cleaned data
+seurat.obj <- CreateSeuratObject(SO_out)
+```
+
+<br>
+
+# Pre-process for Doublet Finder
+
+[(McGinnis et al., 2019)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6853612/)
+
+```{r echo=TRUE, error=FALSE, fig.align= 'center', message=FALSE, warning=FALSE}
+
+seurat.obj
+
+seurat.obj[["percent.mt"]] <- PercentageFeatureSet(seurat.obj, pattern = "^MT-")
+
+VlnPlot(seurat.obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r echo=TRUE, error=FALSE, fig.align= 'center', message=FALSE, warning=FALSE}
+#Set lower filter to get rid of low count nFeature & MT %
+seurat.obj.f <- subset(seurat.obj, subset = nFeature_RNA > 300)
+seurat.obj.f <- subset(seurat.obj.f, subset = percent.mt < 20)
+
+
+VlnPlot(seurat.obj.f, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+seurat.obj.f
+```
+
+```{r echo=TRUE, error=FALSE, fig.align= 'center', message=FALSE, warning=FALSE}
+# Pre-process standard workflow
+seurat.obj.f <- NormalizeData(object = seurat.obj.f)
+seurat.obj.f <- FindVariableFeatures(object = seurat.obj.f)
+seurat.obj.f <- ScaleData(object = seurat.obj.f)
+seurat.obj.f <- RunPCA(object = seurat.obj.f)
+ElbowPlot(seurat.obj.f, ndims = 40)
+```
+
+```{r echo=TRUE, error=FALSE, fig.align= 'center', message=FALSE, warning=FALSE}
+# PCs between 15-20
+seurat.obj.f <- FindNeighbors(object = seurat.obj.f, dims = 1:30)
+
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.03, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.05, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.1, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.2, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.3, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.4, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.5, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.6, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.7, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.8, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 0.9, verbose = FALSE)
+seurat.obj.f <- FindClusters(object = seurat.obj.f, resolution = 1, verbose = FALSE)
+
+
+seurat.obj.f <- RunUMAP(object = seurat.obj.f, dims = 1:30)
+```
+
+```{r}
+# check resolution
+DimPlot(seurat.obj.f, reduction = "umap", group.by = "RNA_snn_res.0.03")
+DimPlot(seurat.obj.f, reduction = "umap", group.by = "RNA_snn_res.0.05")
+DimPlot(seurat.obj.f, reduction = "umap", group.by = "RNA_snn_res.0.1")
+DimPlot(seurat.obj.f, reduction = "umap", group.by = "RNA_snn_res.0.2")
+DimPlot(seurat.obj.f, reduction = "umap", group.by = "RNA_snn_res.0.3")
+```
+
+
+```{r echo=TRUE, error=FALSE, fig.align= 'center', message=FALSE, warning=FALSE, fig.asp=0.4}
+
+# tentative setting
+seurat.obj.f$seurat_clusters <- seurat.obj.f$RNA_snn_res.0.2  # change
+
+p1 <- DimPlot(seurat.obj.f, reduction = "umap", group.by = "seurat_clusters", label = TRUE) + NoLegend()
+p2 <- VlnPlot(seurat.obj.f, features = c("nFeature_RNA"), group.by = "seurat_clusters")
+
+p1+p2
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center', results=F}
+
+# Calculate each combination of pN and pK
+sweep.res.list_seurat.obj.f <- paramSweep(seurat.obj.f, PCs = 1:20, sct = FALSE) 
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+
+#Summarize each combination of pN and pK
+sweep.stats_seurat.obj.f <- summarizeSweep(sweep.res.list_seurat.obj.f, GT = FALSE) 
+
+#Select the pK that corresponds to max bcmvn to optimize doublet detection
+bcmvn_seurat.obj.f <- find.pK(sweep.stats_seurat.obj.f)
+pK <- bcmvn_seurat.obj.f %>% 
+  filter(BCmetric == max(BCmetric)) %>%
+  dplyr::select(pK) 
+
+#See pK in the Values Environment
+pK <- as.numeric(as.character(pK[[1]]))
+
+```
+
+```{r homotypic_doublets, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+ 
+# Homotypic Doublet Proportion Estimate -------------------------------------------------------------------------------------
+annotations <- seurat.obj.f@meta.data$seurat_clusters  
+ 
+homotypic.prop <- modelHomotypic(annotations)           
+homotypic.prop
+ 
+# 10X Multiplet Rate Table (the doublet ratio is # of cells recovered divided by 125000) https://kb.10xgenomics.com/hc/en-us/articles/360001378811-What-is-the-maximum-number-of-cells-that-can-be-profiled-
+ 
+nrow(seurat.obj.f@meta.data)
+
+nExp_poi <- round(nrow(seurat.obj.f@meta.data) # To calculate cell number
+                  /125000              # To calculate the doublet ratio
+                  *nrow(seurat.obj.f@meta.data))
+nExp_poi
+
+#nExp_poi <- 1000
+
+nExp_poi_adj <- round(nExp_poi*(1-homotypic.prop))
+
+nExp_poi_adj 
+```
+
+<br>
+
+# Doublet Finder
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+
+seurat.obj.f_doublets <- doubletFinder(seurat.obj.f,
+                        PCs = 1:20,
+                        pN = 0.25,
+                        pK = pK,
+                        nExp = nExp_poi_adj,
+                        reuse.pANN = FALSE, sct = FALSE)
+```
+
+```{r}
+colnames(seurat.obj.f_doublets@meta.data)[19] <- "pANN"  # change
+colnames(seurat.obj.f_doublets@meta.data)[20] <- "DF.class"  # change
+head(seurat.obj.f_doublets@meta.data)
+table(seurat.obj.f_doublets@meta.data$DF.class)
+
+DimPlot(seurat.obj.f_doublets, group.by = "DF.class")
+
+```
+
+<br>
+
+# Subset singlets
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+
+seurat.obj.f_singlets <- subset(seurat.obj.f_doublets, DF.class == "Singlet")
+seurat.obj.f_singlets
+DimPlot(seurat.obj.f_singlets, reduction = "umap", group.by = "seurat_clusters")
+
+```
+
+<br>
+
+# Add Meta data
+
+```{r echo=TRUE, error=FALSE, fig.align= 'center', message=FALSE, warning=FALSE}
+# Create Seurat object and add metadata
+
+seurat.obj.f_singlets <- AddMetaData(object = seurat.obj.f_singlets, metadata = Sample, col.name = "Sample") #Change
+seurat.obj.f_singlets <- AddMetaData(object = seurat.obj.f_singlets, metadata = Condition, col.name = "Condition") #Change
+
+
+head(seurat.obj.f_singlets@meta.data)
+```
+
+<br>
+
+# Set Idents
+
+```{r}
+Idents(seurat.obj.f_singlets) <- "seurat_clusters"
+```
+
+<br>
+
+# Initial Cluster Identification with Heatmap and Vln Plot
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+
+seurat.obj.f_singlets.markers <- FindAllMarkers(seurat.obj.f_singlets, 
+                                                only.pos = TRUE, 
+                                                min.pct = 0.25, 
+                                                logfc.threshold = 0.25,
+                                                verbose = FALSE)
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center', fig.width = 7, fig.height= 8}
+# heatmap with top5
+seurat.obj.f_singlets.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 5, wt = avg_log2FC) -> top5
+
+DoHeatmap(seurat.obj.f_singlets, features = top5$gene) + NoLegend()
+
+# violin plot with top2
+seurat.obj.f_singlets.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 2, wt = avg_log2FC) -> top2
+
+VlnPlot(seurat.obj.f_singlets, 
+        features = unique(top2$gene),
+        stack = TRUE, 
+        flip = TRUE,
+        pt.size = 0)+
+        NoLegend()
+
+# list of top10
+t1 <- seurat.obj.f_singlets.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10)
+   
+t1
+```
+
+<br>
+
+# Initial Cluster Identification with DotPlot
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+
+DotPlot(seurat.obj.f_singlets, features = unique(top2$gene), dot.scale = 8, cols = c("dodgerblue2", "coral2")) + RotatedAxis()
+```
+
+<br>
+
+# Code to Add to Pre-processing
+
+```{r fig.asp=0.5}
+# nFeature check
+
+p1 <- DimPlot(seurat.obj.f_singlets, reduction = "umap", label = TRUE) + NoLegend()
+p2 <- FeaturePlot(seurat.obj.f_singlets, features = "nFeature_RNA")
+p3 <- VlnPlot(seurat.obj.f_singlets, features = "nFeature_RNA")
+
+p1+p2
+p3
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=TRUE, fig.align = 'center', fig.asp=0.5}
+# Jonathan's cell type marker set
+cluster <- c("COL1A1",    # for Fibroblasts
+             "VCAM1",     # for Damaged Epithelial
+             "EPCAM",     # for Epithelial
+             "GATA3",     # for Mesenchymal Unknown
+             "TOP2A",     # for Cycling
+             "PIEZO2")    # for Mesangial Cells
+
+for (i in cluster) {
+  p1 <- FeaturePlot(seurat.obj.f_singlets, i, order = T)
+  p2 <- VlnPlot(seurat.obj.f_singlets, i) + NoLegend()
+  #print(p1)
+  #print(p2)
+  print(p1|p2)
+}
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=TRUE, fig.align = 'center'}
+
+DotPlot(seurat.obj.f_singlets,
+features = cluster,
+dot.scale = 8,
+dot.min = 0,
+scale.max = 100,
+scale.min = 0,
+col.min = -2.5,
+col.max = 2.5) +
+  coord_flip() +
+  theme_classic() +
+  theme(axis.line = element_line(size = 1, colour = "black"),
+        axis.ticks.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        text = element_text(size=20),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab(NULL) +
+  ylab(NULL)
+```
+
+<br>
+
+# Renaming Clusters and Re-Run Markers
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=TRUE, fig.align = 'center', fig.width=8}
+
+seurat.obj.f_singlets@meta.data <- seurat.obj.f_singlets@meta.data %>% 
+  mutate(class.jwn = dplyr::case_when(
+    seurat_clusters == 0  ~ "Damaged Epithelial",
+    seurat_clusters == 1  ~ "Fibroblasts",
+    seurat_clusters == 2  ~ "Fibroblasts",
+    seurat_clusters == 3  ~ "Fibroblasts",
+    seurat_clusters == 4  ~ "Epithelial",
+    seurat_clusters == 5  ~ "Unknown Cells",
+    seurat_clusters == 6  ~ "Mesenchymal Unknown",
+    seurat_clusters == 7  ~ "Cycling",
+    seurat_clusters == 8  ~ "Mesangial Cells"
+
+ ))
+
+# set an order 
+seurat.obj.f_singlets$class.jwn <- factor(seurat.obj.f_singlets$class.jwn, 
+                                          levels = c("Fibroblasts", 
+                                                     "Damaged Epithelial", 
+                                                     "Epithelial",
+                                                     "Mesenchymal Unknown",
+                                                     "Cycling",
+                                                     "Mesangial Cells",
+                                                     "Unknown Cells"))
+
+table(seurat.obj.f_singlets$class.jwn)
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=TRUE, fig.align = 'center', fig.width=8}
+Idents(seurat.obj.f_singlets) <- seurat.obj.f_singlets@meta.data$class.jwn
+
+DimPlot(seurat.obj.f_singlets, group.by = "class.jwn") + ggtitle(NULL) + xlab("UMAP 1") + ylab("UMAP 2") +
+  theme_classic() +
+  theme(axis.line = element_line(size = 1, colour = "black"),
+        text = element_text(size=15))
+
+DimPlot(seurat.obj.f_singlets, group.by = "class.jwn", label = T) + ggtitle(NULL) + xlab("UMAP 1") + ylab("UMAP 2") +
+  theme_classic() +
+  theme(axis.line = element_line(size = 1, colour = "black"),
+        text = element_text(size=15))
+
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=TRUE, fig.align = 'center', fig.asp=0.6}
+
+for (i in cluster) {
+  p1 <- FeaturePlot(seurat.obj.f_singlets, i, order = T)
+  p2 <- VlnPlot(seurat.obj.f_singlets, i) + NoLegend()
+  #print(p1)
+  #print(p2)
+  print(p1|p2)
+}
+```
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=TRUE, fig.align = 'center', fig.height=6}
+DotPlot(seurat.obj.f_singlets,
+features = cluster,
+dot.scale = 8,
+dot.min = 0,
+scale.max = 100,
+scale.min = 0,
+col.min = -2.5,
+col.max = 2.5) +
+  coord_flip() +
+  theme_classic() +
+  theme(axis.line = element_line(size = 1, colour = "black"),
+        axis.ticks.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        text = element_text(size=20),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab(NULL) +
+  ylab(NULL)
+```
+
+<br>
+
+# Output Files
+
+```{r echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+
+saveRDS(seurat.obj.f_singlets, paste0(dir_01_seurat_objects, "/", Sample, ".rds")) #Change
+
+```
+
+<br>
+
+# Session Info
+
+```{r sessioninfo, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE, fig.align = 'center'}
+
+sessionInfo()
+```

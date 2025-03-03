@@ -281,3 +281,4 @@ prot_metadata <- prot_metadata2 |>
 #    prot_tissue_expression_ratio, gene_exp_by_tissue, 
 #    extracted_values, extract_values,
 #    var_uni_value)
+

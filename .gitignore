@@ -8,4 +8,5 @@ Icon?
 *.html
 *.gephi
 *.cys
-archive/
+sandbox/
+.vdoc.r

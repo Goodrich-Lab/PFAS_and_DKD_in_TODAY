@@ -1,0 +1,648 @@
+---
+title: "Combine proteomics and scRNAseq data"
+format: html
+---
+
+## 
+
+```{r setup}
+# Sandbox analysis
+source(here::here("!libraries.r"))
+source(here::here("!directories.r"))
+source(here::here("!load_clean_data.R"))
+library(ComplexUpset)
+```
+
+
+
+# I. Read in scRNAseq DEGs ----
+```{r read scRNAseq}
+# Read and combine all CSV files into a single data frame, adding a column for file names
+scRNAseq_deg <- list.files(path = fs::path(dir_data, "scRNAseq DEGs"),
+                           pattern = "*.csv", 
+                           full.names = TRUE) %>%
+  set_names(.) %>%
+  map_df(~ read_csv(.x) %>% 
+           mutate(file_name = tools::file_path_sans_ext(basename(.x))))
+
+# Rename first col
+scRNAseq_deg <- scRNAseq_deg |> 
+  dplyr::rename("gene" = 1) |> 
+  dplyr::mutate(
+    file_name = str_remove(file_name, ".de.markers"),
+    cell_type_time = str_remove(file_name, "PFNAvsCTR_"),
+    week = if_else(str_detect(file_name, "week1"), "week 1", "week 2"),
+    cell_type = str_remove(cell_type_time, "week1_") |> 
+      str_remove("week2_"))
+
+# table(scRNAseq_deg2$cell_type_time)
+# table(scRNAseq_deg2$cell_type)
+
+# Add variable to identify top DEGs
+scRNAseq_deg <- scRNAseq_deg |>
+  dplyr::mutate(
+    top_scrnaseq = ifelse(abs(avg_log2FC) > quantile(abs(avg_log2FC), 0.5),1,0))
+
+# Create filtered data frame with p<0.05
+scRNAseq_deg_sig_p05 <- scRNAseq_deg |>
+  tidylog::filter(p_val<0.05)
+
+# Filter significant only
+scRNAseq_deg_sig_fdr05 <- scRNAseq_deg |>
+  tidylog::filter(p_val_adj<0.05)
+table(scRNAseq_deg_sig_fdr05$week)
+
+length(unique(scRNAseq_deg_sig_fdr05$gene))
+
+# Pivot wider for merge
+sc_fdr05_w_pvals <- scRNAseq_deg_sig_fdr05 |> 
+  tidylog::select(gene, p_val, cell_type_time) |> 
+  pivot_wider(id_cols = gene, 
+              names_from = cell_type_time, 
+              values_from = p_val) |> 
+  mutate(sc_gene = "sig scRNAseq") |>
+  janitor::clean_names()
+```
+
+
+# II. Proteomics meet in middle results ----
+```{r read proteomics}
+# Mediation result s:
+mediation_res <- read_csv(
+  fs::path(dir_results, "med_res_df_020924.csv"))
+
+# Meet in middle results:
+mim_res_all <- read_csv(
+  fs::path(dir_results, "meet_in_middle_res_all_072924.csv")) |> 
+  tidylog::filter(omic_layer == "Proteomics") |> 
+  tidylog::select(-EntrezGeneSymbol, -omic_layer)
+
+# Results of all mediation analyses
+mediation_res_all_pairwise <- read_csv(
+  fs::path(dir_results, "pairwise_mediation_result.csv"))
+
+# Combine protein metadata and proteomics results
+mediation_res_all <- tidylog::inner_join(mediation_res_all_pairwise, 
+                                         mim_res_all,
+                                         by = c("AptName" = "feature_name")) 
+
+# For now, since we didnt include an interaction, we can exclude the .T and 
+# .C vars from the mediation results
+mediation_res_all <- mediation_res_all |>
+  tidylog::select(-contains(".T"), 
+                  -contains(".C"), 
+                  # -contains(".pval"),
+                  -contains(".hi"), 
+                  -contains(".lo")) |>
+  rename_all(~str_remove(., ".avg")) |> 
+  relocate(var_name, .before = nobs)
+
+
+# Split gene names by | to get individual rows
+mediation_res_all <- mediation_res_all %>%
+  tidyr::separate_longer_delim(EntrezGeneSymbol, "|") 
+
+
+# Calculate type of significance for each protein
+mediation_res_all <- mediation_res_all |> 
+  dplyr::mutate(
+    sig_mim_p05 = case_when(
+      p_value_em < 0.05 & p_value_mo < 0.05 ~ "Both significant", 
+      p_value_em < 0.05 ~ "Exposure-Mediator significant",
+      p_value_mo < 0.05 ~ "Mediator-Outcome significant",
+      TRUE ~ "Neither significant"),
+    sig_mim_efnumtst = case_when(
+      sig_efnum_em == "Sig" & sig_efnum_mo == "Sig" ~ "Both significant", 
+      sig_efnum_em == "Sig" ~ "Exposure-Mediator significant", 
+      sig_efnum_mo == "Sig" ~ "Mediator-Outcome significant", 
+      TRUE ~ "Neither significant") 
+  )
+
+table(mediation_res_all$sig_mim_p05)
+table(mediation_res_all$sig_mim_efnumtst)
+
+
+# Clean gene names- remove na genes and select that with the largest PMed
+mediation_res_all <- mediation_res_all |>
+  tidylog::filter(!is.na(EntrezGeneSymbol)) |>
+  group_by(EntrezGeneSymbol) |>
+  tidylog::filter(abs(PMed) == max(abs(PMed))) |>
+  slice_head() |>
+  ungroup()
+
+
+table(mediation_res_all$sig_mim_p05)
+# table(mediation_res_all2$sig_mim_p05)
+
+
+# ## b. Calculate top 10 -----
+# mediation_res_all <- mediation_res_all |>
+#   mutate(top_prop_med = ifelse(PMed > quantile(PMed, 0.5), 1, 0), 
+#          sig_mim = if_else(AptName %in% mediation_res$feature_name, 
+#                            "Associated with both PFAS and DKD", 
+#          )
+
+
+## a. Filter to select only 35 sig from meet in middle -------
+# pfas_prot_35_mim <- mediation_res_all |>
+#   tidylog::filter(AptName %in% mediation_res$feature_name)
+# 
+# rm(pfas_proteomics_res)
+```
+
+
+# III. Combine data from proteomics and scRNAseq ----
+```{r combine and create upset}
+# 1. Combine in wide format (better for comptoxai) ----
+full_data_sig_w <- mediation_res_all |> 
+  tidylog::filter(sig_mim_p05 != "Neither significant") |>
+  tidylog::full_join(sc_fdr05_w_pvals, by = c("EntrezGeneSymbol" = "gene")) |> 
+  tidylog::select(-AptName, -c(var_name:ADE.pval))
+
+
+# Create variable that combines scRNAseq and proteomics results
+full_data_sig_w <- full_data_sig_w |> 
+  dplyr::mutate(
+    sig_overall_with_efnumtests = case_when(
+      sig_mim_p05 == "Both significant" & !is.na(sc_gene) ~ "scRNAseq & TODAY Sig p_05 in MIM", 
+      sig_efnum_em == "Sig" & !is.na(sc_gene)             ~ "scRNAseq & TODAY E->M efnumtests",
+      sig_efnum_mo == "Sig" & !is.na(sc_gene)             ~ "scRNAseq & TODAY M->O efnumtests",
+      # sig_efnum_em == "Sig" & sig_efnum_mo == "Sig" & !is.na(sc_gene) ~ "TODAY sig efnumtest both MIM",
+      sig_efnum_em == "Sig" &  is.na(sc_gene) ~ "TODAY E->M only efnumtests",
+      sig_efnum_mo == "Sig" &  is.na(sc_gene) ~ "TODAY M->O only efnumtests",
+      p_value_em < 0.05 & !is.na(sc_gene) ~ "scRNAseq & TODAY E->M p_05",
+      p_value_em < 0.05 & !is.na(sc_gene) ~ "scRNAseq & TODAY M->O p_05",
+      !is.na(sc_gene) &  p_value_em > 0.05 & sig_efnum_mo > 0.05 ~ "scRNAseq only",
+      !is.na(sc_gene) &  is.na(sig_mim_p05) ~ "scRNAseq only",
+      is.na(sc_gene) &  !is.na(sig_mim_p05) ~ paste("TODAY", sig_mim_p05),
+      TRUE ~ "check"), 
+    sig_overall = case_when(
+      sig_mim_p05 == "Both significant" & !is.na(sc_gene) ~ "scRNAseq & TODAY MIM", 
+      is.na(sig_mim_p05)  & !is.na(sc_gene) ~ "scRNAseq only",
+      !is.na(sig_mim_p05)  & !is.na(sc_gene) ~ paste("scRNAseq & TODAY", sig_mim_p05), 
+      !is.na(sig_mim_p05) & is.na(sc_gene) ~ paste("TODAY only", sig_mim_p05), 
+      is.na(sig_mim_p05) & is.na(sc_gene) ~ "Not Significant", 
+      TRUE ~ "check"), 
+    sig_overall = str_replace(sig_overall, "Both significant", "MIM") |> 
+      str_replace("Exposure-Mediator significant", "PFNA->Protein")   |>
+      str_replace("Mediator-Outcome significant", "Protein->DKD"), 
+    sig_overall_simplified = case_when(
+      str_detect(sig_overall, "scRNAseq & TODAY") ~ "Both", 
+      str_detect(sig_overall, "TODAY only") ~ "TODAY",
+      str_detect(sig_overall, "scRNAseq only") ~ "scRNAseq",
+      TRUE ~ "check"))
+
+
+table(full_data_sig_w$sig_overall)
+
+overlapping_genes <- full_data_sig_w |> 
+  tidylog::filter(sig_overall_simplified == "Both") |> 
+  dplyr::select(EntrezGeneSymbol, sig_overall, everything())
+
+overlapping_sig <- full_data_sig_w |> 
+  tidylog::filter(sig_overall == "scRNAseq & TODAY MIM") |> 
+  dplyr::select(EntrezGeneSymbol, sig_overall, everything())
+
+
+# Save data (change if needed to indicate which significance threshold is used)
+# write_csv(full_data_sig_w,
+#           fs::path(dir_results,"Combined_proteomics_scRNAseq_sig_results_090924.csv"))
+
+write_csv(full_data_sig_w,
+          fs::path(dir_results,
+                   "Combined_proteomics_scRNAseq_sig_fdr_results_090924.csv"))
+
+table(is.na(full_data_sig_w$EntrezGeneSymbol))
+# 2. Combining in Long formate (best for upset plot) -----
+# Perform further cleaning for combining in long format
+## a. Mediation results ----
+mediation_res_l <- mediation_res_all |> 
+  tidylog::select(EntrezGeneSymbol, p_value_em, p_value_mo) |> 
+  tidylog::filter(p_value_em < 0.05 | p_value_mo < 0.05) |> 
+  tidylog::pivot_longer(cols = c(p_value_em, p_value_mo), 
+                        names_to = "variable", 
+                        values_to = "p_val") |> 
+  tidylog::rename(gene = EntrezGeneSymbol)
+
+# proteins measured
+measured_today <- tibble(gene = unique(mediation_res_all$EntrezGeneSymbol), 
+                         variable = "Measured in TODAY", 
+                         value = 1)
+## b. scRNAseq results ----
+# scRNAseq results- note- if we do scRNAseq results by cell, there are too many
+# This code collapses across week and selects genes associated at either 1 or 2
+scRNAseq_deg_l <- scRNAseq_deg |> 
+  filter(p_val_adj < 0.05) |> 
+  group_by(gene, cell_type) |>
+  tidylog::slice_head() |> 
+  ungroup() |> 
+  tidylog::select(gene, p_val, p_val_adj, cell_type) |> 
+  tidylog::rename(variable = cell_type) |> 
+  tidylog::mutate(value = 1)
+
+# All measured genes
+measured_scrnaseq <- tibble(gene = unique(scRNAseq_deg$gene), 
+                            variable = "Measured in scRNAseq", 
+                            value = 1)
+# sig genes
+sig_scrnaseq <- tibble(gene = unique(scRNAseq_deg$gene[scRNAseq_deg$p_val_adj<0.05]), 
+                       variable = "Significant in scRNAseq", 
+                       value = 1)
+
+## a. Combine datasets ------
+alldat <- bind_rows(mediation_res_l, 
+                    # measured_today,
+                    scRNAseq_deg_l,
+                    # sig_scrnaseq,
+                    # measured_scrnaseq
+) |>
+  tidylog::mutate(variable = case_when(
+    variable == "p_value_em" ~ "PFNA in TODAY",
+    variable == "p_value_mo" ~ "DKD in TODAY",
+    TRUE ~ variable)) 
+
+
+# Calculate value to indicate if the gene should be included in each category
+# CHANGE HERE TO MAKE FDR THRESHOLDS FOR THE UPSET PLOT
+alldat <- alldat |> 
+  tidylog::mutate(
+    value = case_when(
+      is.na(value) ~ p_val < 0.05, 
+      TRUE ~ value)) |> 
+  tidylog::select(gene, variable, value)
+
+
+# Summarize into dataset for upset plot 
+upset_dat <- alldat |> 
+  pivot_wider(names_from = variable, id_cols = "gene") |>
+  dplyr::mutate(across(where(is.numeric), function(x){replace_na(x, 0)}))
+
+
+```
+
+
+# IV. Upset plot
+```{r}
+vars_to_plot <- upset_dat |> tidylog::select(-gene) |> colnames()
+
+upset_metadata = data.frame(
+  set=c("PFNA in TODAY", "DKD in TODAY", vars_to_plot[-c(1:2)]),
+  dataset=c("TODAY", "TODAY", rep("scRNAseq", length(vars_to_plot)-2))
+)
+
+# Upset plot ----
+vars_to_plot <- upset_dat |> tidylog::select(-gene) |> colnames()
+
+upset(data = upset_dat, 
+      intersect = vars_to_plot, 
+      stripes=upset_stripes(
+        data=upset_metadata,
+        mapping=aes(color=dataset),
+        colors=c(
+          'TODAY'='red',
+          'scRNAseq'='grey90')
+      ))
+```
+
+
+# V. Examine genes that are overlapping between scRNAseq and E-->M/MIM
+```{r}
+# Remove previous scRNAseq data and merge in the long format data              
+overlapping_sig_l <- overlapping_genes |> 
+  tidylog::select(-c(week1_cycling:sc_gene)) |> 
+  tidylog::left_join(scRNAseq_deg_sig_fdr05, 
+                     by = c("EntrezGeneSymbol" = "gene"))
+
+# Filter that are significant E->M or MIM in TODAY and sig in scRNAseq
+overlapping_sig_l <- overlapping_sig_l |> 
+  tidylog::filter(sig_overall_with_efnumtests %in% 
+                    c("scRNAseq & TODAY E->M p_05", 
+                      "scRNAseq & TODAY Sig p_05 in MIM")) 
+
+# Create summary vars  
+overlapping_sig_l <- overlapping_sig_l |>   
+  tidylog::mutate(
+    same_dir_em_and_scrna = if_else(estimate_em * avg_log2FC > 0, 
+                                    "Same Direction", 
+                                    "Different Direction"), 
+    em_dir = if_else(estimate_em > 0, 
+                     "Upregulated in TODAY", 
+                     "Downregulated in TODAY"))
+
+
+# Filter to significant cell types and summarize results
+# ol_sum <- overlapping_sig_l |> 
+#   tidylog::filter(p_val_adj < 0.05) |>
+#   dplyr::group_by(EntrezGeneSymbol) |> 
+#   tidylog::summarise_all(function(x){
+#     if_else(is.numeric(x), 
+#             unique(x) |> str_c(collapse = "; ")}) |> 
+#   ungroup()
+
+
+# Plot all variables 
+ggplot(overlapping_sig_l, 
+       aes(x = estimate_em, 
+           y = avg_log2FC, 
+           group = EntrezGeneSymbol)) +
+  geom_hline(yintercept = 0, linetype = 2, color = "grey20") +
+  geom_line() +  
+  geom_point(aes(shape = week, 
+                 color = week) ) + 
+  facet_wrap(~ em_dir, scales = "free_x")
+
+length(unique(overlapping_sig_l$EntrezGeneSymbol))
+
+# Select only those in the same direction
+same_dir_sig <- overlapping_sig_l |> 
+  tidylog::filter(same_dir_em_and_scrna == "Same Direction")
+
+num_unique_overlapping_genes <- length(unique(same_dir_sig$EntrezGeneSymbol))
+
+# Plot variables in same direction 
+same_dir_sig |>
+  # group_by(EntrezGeneSymbol) |> 
+  # filter(avg_log2FC == max(avg_log2FC)) |>
+  filter(cell_type != "Cycling") |>
+  ggplot(aes(x = estimate_em, 
+             y = avg_log2FC)) +
+  # geom_hline(yintercept = 0, linetype = 2, color = "grey20") +
+  geom_line(aes(group = EntrezGeneSymbol), color = "grey80") +
+  # geom_smooth(method = "lm") +
+  geom_text(aes(label =EntrezGeneSymbol, color = cell_type), 
+            size = 3) + 
+  facet_wrap(~ week, scales = "free_x")
+```
+
+
+# Forest plot of overlapping significant genes
+```{r new}
+# Prep data for forest plot ----
+## a) prep human data ----
+human_overlap <- overlapping_sig_l |> 
+  tidylog::select(EntrezGeneSymbol, sig_overall, same_dir_em_and_scrna,
+                  estimate_em, conf_low_em, conf_high_em, p_value_em,
+                  estimate_mo, conf_low_mo, conf_high_mo, p_value_mo)
+
+overlap_sig_human_l <- human_overlap |> 
+  group_by(EntrezGeneSymbol) |> slice_head() |> 
+  pivot_longer(cols = c(estimate_em, conf_low_em, conf_high_em, p_value_em, 
+                        estimate_mo, conf_low_mo, conf_high_mo, p_value_mo), 
+               names_to = c("variable", 
+                            "estimate_type"), 
+               names_pattern = "(.*)_(.*)", 
+               values_to = "value") |>
+  mutate(study = "human")
+
+## b) prep in-vivo data ----
+cell_overlap <- overlapping_sig_l |> 
+  dplyr::mutate(estimate_type = str_c(cell_type, "; ", week),) |>
+  dplyr::rename(p_value = p_val_adj, 
+                estimate = avg_log2FC) |>
+  tidylog::select(EntrezGeneSymbol, sig_overall, same_dir_em_and_scrna,
+                  estimate_type, estimate, p_value) 
+
+overlap_sig_cell_l <- cell_overlap |> 
+  pivot_longer(cols = c("estimate", "p_value"), 
+               names_to = "variable", values_to =  "value") |>
+  mutate(study = "cell")
+
+
+## c. Merge datasets and pivot longer on study ----
+overlap_combined <- bind_rows(overlap_sig_human_l, overlap_sig_cell_l)
+  
+
+## Pivot wider
+overlap_combined_w <- overlap_combined |> 
+  pivot_wider(names_from = "variable", values_from = "value")  |>
+    ungroup()
+
+## All genes overlapping ----
+ggplot(overlap_combined_w, 
+       aes(y = EntrezGeneSymbol, 
+           x = estimate, 
+           xmin = conf_low, 
+           xmax = conf_high, 
+           color = same_dir_em_and_scrna)) + 
+  geom_bar(stat = "identity") + 
+  geom_vline(xintercept = 0) + 
+  geom_errorbar() + 
+  facet_grid(same_dir_em_and_scrna~ study + estimate_type, scales = "free_y")
+
+
+
+## Four genes significant in MIM and scRNAseq ----
+overlapping_mim_scRNAseq <- overlap_combined_w |> 
+  tidylog::filter(p_value < 0.05, 
+                  same_dir_em_and_scrna == "Same Direction", 
+                  sig_overall == "scRNAseq & TODAY MIM")
+
+overlapping_mim_scRNAseq |> 
+  tidylog::filter(study == "cell") |>
+ggplot(aes(x = EntrezGeneSymbol, 
+           y = estimate, 
+           ymin = conf_low, 
+           ymax = conf_high, 
+           color = )) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 0) + 
+  geom_errorbar(width = 0) + 
+  facet_grid(study + estimate_type ~ ., scales = "free_y") +
+  ylab("Fold Change")
+
+length(unique(overlap_combined_w$EntrezGeneSymbol))
+```
+
+
+# Other analysis
+```{r}
+## JG Start 9/12/2024
+temp <- overlap_combined_w |> 
+  ungroup() |>
+  tidylog::filter(p_value < 0.05, 
+                  same_dir_em_and_scrna == "Same Direction", 
+                  sig_overall == "scRNAseq & TODAY MIM")
+unique(temp$EntrezGeneSymbol)
+
+
+## END 9/12/2024
+# 5. Analyze combined data -----------
+
+
+
+length(unique(ppw2$geneSymbol))
+table(ppw2$week, ppw2$cell_type)
+
+
+# collapse data across scRNseq cell types and time by selecting the most 
+# significant p_value from the scRNAseq data
+ppw_summarized <- ppw2 |> 
+  group_by(geneSymbol) |> 
+  tidylog::filter(p_val == min(p_val)) |> 
+  ungroup()
+# dplyr::summarise(
+#   across(where(is.numeric), mean, na.rm = TRUE),
+#   across(where(is.character), function(x){str_c(unique(x), collapse = "; ")}))
+# rm(ppw2)
+
+# Determine top 10% of mediation, comptoxai, and scRNAseq effects:
+# ppw_summarized <- ppw_summarized |> 
+#   mutate(
+#     top_comptox = ifelse(degree_out > quantile(degree_out, 0.66), 1, 0), 
+#     top_prop_med = ifelse(PMed > quantile(PMed, 0.66), 1, 0), 
+#     top_scrnaseq = ifelse(abs(avg_log2FC) > quantile(abs(avg_log2FC), 0.66), 1, 0))
+
+# Filter top features across all approaches
+ppw_top_pct <- ppw_summarized |> 
+  tidylog::filter(top_comptox == 1, 
+                  top_prop_med == 1, 
+                  top_scrnaseq == 1)
+
+
+# Remove RSPO2, CHRNA5, FSCN1 because effect estimates are not possible?
+# pfas_prot_network <- pfas_prot_network |>
+#   tidylog::filter(!(geneSymbol %in% c ("CHRNA5", "FSCN1")))
+
+# pivot data wider on mediation effect estimates
+# ppw <- ppw |> 
+#   pivot_wider(names_from = Effect, 
+#               values_from = pe, 
+#               id_cols = c(geneSymbol:closeness)) 
+
+
+## a. Filter to only positive percent mediated ---------------------------------
+ppw_pos <- ppw_summarized |> 
+  tidylog::filter(PMed > 0) |>
+  mutate(ACME_abs = abs(ACME))
+
+# Rank the data values
+ppw_rank <- ppw_pos |> 
+  tidylog::select(-geneSymbol) |> #, -c(AptName:ensembl_gene_id)
+  tidylog::mutate(
+    across(c(eigen_centrality:closeness, TE:PMed.pval), 
+           ~rank(.))) %>%
+  bind_cols(ppw_pos[,1], .) 
+
+
+## b. correlation plots ----
+# # (cor_matrix <- cor(janitor::remove_constant(ppw_rank[,-1]), 
+# #                    method = "spearman"))
+# # corrplot::corrplot(cor_matrix, method = 'ellipse', type = 'upper')
+# # PerformanceAnalytics::chart.Correlation(as.matrix(ppw_rank[,-1] |> 
+# #                                                     dplyr::select(-nobs)),
+# #                                         histogram=TRUE, 
+# #                                         cex.labels=50,
+# #                                         method = "spearman")
+# 
+# # Get name of all mediation variables of interest
+# mediation_res_colnames <- ppw_rank |> 
+#   dplyr::select(-nobs, -geneSymbol, -AptName, #-Target,
+#                 -all_of(colnames(node_metadata[,-1])), 
+#                 -contains(".pval")) |>
+#   colnames()
+# 
+# # Test all associations 
+# resout <- epiomics::owas(
+#   df = ppw_rank, 
+#   var = colnames(node_metadata[,-1]), 
+#   omics = mediation_res_colnames, 
+#   var_exposure_or_outcome = "exposure")
+# 
+# cor(ppw_rank$eigen_centrality, ppw_rank$ACME, method = "spearman")
+# # pm_quartile = gtools::quantcut(ppw_rank$pm, 4) |> as.numeric()
+
+# get colors
+ppw_rank1 <- ppw_rank %>% 
+  mutate(Group = case_when(top_comptox + top_scrnaseq + top_prop_med == 3 ~ "Identified across all methods",
+                           top_comptox == 1 & top_scrnaseq == 1 ~ "ComptoxAI and in-vitro", 
+                           top_prop_med == 1 & top_scrnaseq == 1 ~ "TODAY and in-vitro", 
+                           top_prop_med == 1 & top_comptox == 1 ~ "TODAY and ComptoxAI", 
+                           top_comptox  == 1 ~ "ComptoxAI",
+                           top_prop_med == 1 ~ "TODAY",
+                           top_scrnaseq == 1 ~ "In-vitro",
+                           TRUE ~ "None"))
+table(ppw_rank1$top_comptox, ppw_rank1$top_prop_med, ppw_rank1$top_scrnaseq)
+table(ppw_rank1$Group)
+
+# Color = case_when(top_comptox + top_scrnaseq + top_prop_med == 3 ~ "#f54278",
+#                   top_comptox == 1 & top_scrnaseq == 1 ~ ""
+#                   top_30_hc == 1 ~ "#fc8c03",
+#                   top_30_prop_med == 1 ~ "#4287f5",
+#                   top_30_hc != 1&top_30_prop_med != 1 ~ "white"),
+
+
+
+
+
+## c. Plot relationships of graph characteristics with mediation results ----
+# (cor_plot <- ggplot(ppw_rank, aes(x = hub_score, y = Rpnie, label = geneSymbol)) +
+(cor_plot <- ggplot(ppw_rank1, aes(x = harmonic_centrality, 
+                                   y = PMed, 
+                                   color = Group, 
+                                   label = geneSymbol)) +
+   ggrepel::geom_label_repel(force = 1, box.padding = .5, min.segment.length = 0) +
+   # annotate("rect", xmin = -Inf, xmax = 15, ymin = -Inf, ymax = 15, fill = "lightgreen", alpha = 0.3) +
+   # annotate("rect", xmin = 15, xmax = Inf, ymin = -Inf, ymax = 15, fill = "lightblue", alpha = 0.3) +
+   # annotate("rect", xmin = -Inf, xmax = 15, ymin = 15, ymax = Inf, fill = "lightyellow", alpha = 0.3) +
+   # annotate("rect", xmin = 15, xmax = Inf, ymin = 15, ymax = Inf, fill = "lightpink", alpha = 0.3) +
+   geom_point(aes(size = abs(avg_log2FC))) + 
+   # geom_point(aes(size = pm), shape = 21, color = "black", fill = "grey50") +
+   # geom_point(aes(size = pm_quartile, fill = pm_quartile), shape = 21, color = "black") +
+   scale_size(name = "Average\nLog2 FC\n") +
+   xlab("Harmonic Centrality from ComptoxAI (Rank)") +
+   ylab("Proportion Mediated\nfrom TODAY Study (Rank)") + 
+   xlim(c(2, 32)) 
+) 
+
+quantile(ppw_rank$harmonic_centrality, 2/3)
+
+
+ggsave(cor_plot, 
+       filename = fs::path(dir_figure, "Fig3b_Centrality vs PM.jpg"), 
+       height = 6, width = 6)
+
+
+
+
+
+# 5. Plot Graph ------
+
+
+V(g)$node_color <- case_when(
+  V(g)$type == "Disease"                ~ "purple",  
+  V(g)$type == "mediating-protein"      ~ "Light Blue",
+  V(g)$type == "non-identified protein" ~ "grey50", 
+  V(g)$type == "PFAS"                   ~ "red")
+
+
+str(g)
+
+plot.igraph(g, layout = layout_with_fr(g), 
+            vertex.color=V(g)$node_color, 
+            vertex.frame.color="#555555", 
+            vertex.label=V(g)$id, vertex.label.color="black")
+
+
+# Save 
+?read.graph
+read.graph(fs::path(dir_results, 
+                    "ComptoxAI",
+                    "PFAS_prot_dkd_expanded_020924_with_nodes.graphml"),
+           format = "graphml")
+
+
+# With NetworkD3
+
+
+g_d3 <- igraph_to_networkD3(g, group = members)
+
+# Create force directed network plot
+forceNetwork(Links = karate_d3$links, Nodes = karate_d3$nodes, 
+             Source = 'source', Target = 'target', 
+             NodeID = 'name', Group = 'group')
+
+
+# With GGraph
+library(ggraph)
+```
+

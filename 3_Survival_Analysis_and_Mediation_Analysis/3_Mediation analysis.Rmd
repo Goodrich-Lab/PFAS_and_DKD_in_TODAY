@@ -18,10 +18,10 @@ font-size: 12pt;
 </style>
 
 ```{r exposure outcome setup, include=FALSE}
-source(here::here("!libraries.R"))
-source(here::here("!directories.R"))
-source(here::here("!load_clean_data.R"))
-source(here::here("!functions.R"))
+source(here::here("1_project_setup/!libraries.R"))
+source(here::here("1_project_setup/!directories.R"))
+source(here::here("1_project_setup/!load_clean_data.R"))
+source(here::here("1_project_setup/!functions.R"))
 
 options(knitr.table.format = "html")
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
@@ -30,18 +30,32 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 # Pairwise Mediation
 ```{r,results='asis'}
 # Read in Meet in middle results, from 2_meet in the middle analysis
-# mim_res <- read_csv(fs::path(dir_results, "meet_in_middle_res_df_serum_creat_covar.csv")) 
-mim_res <- read_csv(fs::path(dir_results, "meet_in_middle_res_020924.csv")) 
+mim_res <- read_csv(fs::path(dir_results, "meet_in_middle_res_sig.csv")) 
+
+
+nexp<- 1 #define number of exposure analytes in your dataset
+nmed<- length(prot_names)#define number of mediators in your dataset
+ncovars<- length(covars)#define number of covariates
+noutcomes<- 1 #define number of outcomes in your dataset
+med.results<-as.data.frame(matrix(nrow=(nexp*nmed*noutcomes),ncol=41))
+colnames(med.results)<-c('nobs', 'ACME.C','ACME.C.lo','ACME.C.hi','ACME.C.Pval','ACME.T','ACME.T.lo',
+                         'ACME.T.hi','ACME.T.pval','ADE.C','ADE.C.lo','ADE.C.hi','ADE.C.Pval','ADE.T',
+                         'ADE.T.lo','ADE.T.hi','ADE.T.pval','PMed.C','PMed.C.lo','PMed.C.hi','PMed.C.pval',
+                         'PMed.T','PMed.T.lo','PMed.T.hi','PMed.T.pval','TE','TE.lo','TE.hi','TE.pval',
+                         'ACME.avg','ACME.avg.lo','ACME.avg.hi','ACME.avg.pval','ADE.avg','ADE.avg.lo',
+                         'ADE.avg.hi','ADE.avg.pval','PMed.avg','PMed.avg.lo','PMed.avg.hi','PMed.avg.pval')
 
 #Loop to conduct pairwise mediation with multiple exposures and mediators
 #Loop repeatedly subsets dataset d1 into d2 for individual pairs of exposures and biomarkers
-
-k = 1
-for(name in prot_names){
   
-  d2<-data_scaled %>% 
+  
+k = 1
+for(name in prot_names[1:4]){
+  
+  d2 <- data_scaled %>% 
     dplyr::select(pfas_pfna, name, all_of(covars), daystomic, mic) %>% as.data.frame() %>%
     rename(mediator = name)
+  
   set.seed(111)
 
   med<- mediation::mediate(
@@ -52,26 +66,9 @@ for(name in prot_names){
                       data=d2),
     treat="pfas_pfna",
     mediator = "mediator")
+  
   model.y = survreg(Surv(daystomic,mic)~pfas_pfna+mediator+sex_male+agebase+eGFR+dxtime,
                     data=d2)
-  # med <- CMAverse::cmest(data = d2, 
-  #              model = "gformula",
-  #              outcome = "mic",
-  #              exposure = "pfas_pfna",
-  #              mediator = "mediator", 
-  #              event = "daystomic",
-  #              basec = c("sex_male","agebase","eGFR","dxtime"),
-  #              EMint = TRUE,
-  #              mreg = list("linear"), 
-  #              yreg = "coxph",
-  #              astar = 0,
-  #              a = 1,
-  #              mval = list(1), 
-  #              estimation = "imputation",
-  #              inference = "bootstrap",
-  #              nboot = 10)
-  
-  
   
   med.results[k,]<-cbind(nobs(model.y),med$d0, med$d0.ci[1], med$d0.ci[2], med$d0.p, med$d1, med$d1.ci[1],
                          med$d1.ci[2], med$d1.p, med$z0, med$z0.ci[1],med$z0.ci[2], med$z0.p, med$z1, 
@@ -80,12 +77,12 @@ for(name in prot_names){
                          med$tau.ci[2], med$tau.p, med$d.avg, med$d.avg.ci[1], med$d.avg.ci[2], med$d.avg.p,
                          med$z.avg, med$z.avg.ci[1], med$z.avg.ci[2], med$z.avg.p, med$n.avg, med$n.avg.ci[1], 
                          med$n.avg.ci[2], med$n.avg.p)
-        # rownames(med.results)[k]<-paste(colnames(d2)[1],name,colnames(d2)[2+ncovars+1],sep='_')
-        rownames(med.results)[k] <- name
-        print(k)
-        print(rownames(med.results)[k])
-        k=k+1
-      }
+  
+  rownames(med.results)[k] <- name
+  print(k)
+  print(rownames(med.results)[k])
+  k=k+1
+  }
 
 ## Adding name to the result
 med_result <- med.results %>% rownames_to_column("AptName") %>%
@@ -93,12 +90,12 @@ med_result <- med.results %>% rownames_to_column("AptName") %>%
   dplyr::select(AptName, EntrezGeneSymbol, everything())
 
 
-write_csv(med_result,fs::path(dir_results,'pairwise_mediation_result.csv'))
-
+# write_csv(med_result,fs::path(dir_results,'pairwise_mediation_result.csv'))
 ```
 
-# Plot
+# Figure 3. Mediation analysis
 ```{r plotting}
+# Filter significant proteins from meet in the middle analysis
 med_result <- read.csv(fs::path(dir_results,'pairwise_mediation_result.csv')) %>%
   filter(AptName %in% mim_res$feature_name)
 
@@ -117,7 +114,7 @@ res <- mim_res %>%
                                  EntrezGeneSymbol == "GDF11|MSTN" ~ "GDF11", 
                                  TRUE ~ EntrezGeneSymbol))
 
-# Coefficient plot HW-----
+# Coefficient plot from meet in the middle-----
 ## result in Long format for plotting (HW)
 res_l <- res %>%
   dplyr::select(feature_name, EntrezGeneSymbol,
@@ -133,10 +130,6 @@ res_l <- res %>%
                      conf_low  = conf_low_mo,
                      conf_high = conf_high_mo,
                      p_value = p.value_mo) %>%
-              # rename(estimate = HR_mo,
-              #        conf_low = exp_conf_low_mo,
-              #        conf_high = exp_conf_high_mo,
-              #        p_value = p.value_mo) %>%
               mutate(type = "Albuminuria")) %>%
   bind_rows(res%>%
               dplyr::select(feature_name, EntrezGeneSymbol,
@@ -158,30 +151,25 @@ dummy2 <- data.frame(type = c("PFNA", "Albuminuria"), Z= c(0, 0))
                       ymax = conf_high),
                   width = 0) +
     geom_point() +
-    # scale_color_manual(values = c("grey60", "black")) +
     coord_flip() +
-    # scale_y_continuous(limits = c(-1.75, 3)) +
     facet_grid(~factor(type, levels=c('PFNA','Albuminuria')),
                scales = "free") +
     geom_hline(data = dummy2, aes(yintercept = Z), linetype = 2, color = "grey50") +
     ylab("β (95% CI)              Log HR (95% CI) ") +
     theme(
       axis.title.y = element_blank(),
-      # axis.title.x = element_blank(),
-      # strip.text.x = element_blank(),
       panel.background = element_rect(fill="white"),
       strip.background = element_rect(fill = "white"),
       legend.position = "none",
       strip.text.y = element_text(angle = 0, hjust = 0)))
 
+# Proportion of mediation from Mediation result------
 (med_plot <- res_l %>%
     filter(!type %in% c("PFNA", "Albuminuria"))%>%
     ggplot(aes(x = factor(EntrezGeneSymbol,levels = arrange(res, PMed.avg)$EntrezGeneSymbol),
                y = estimate)) +
     geom_bar(stat = "identity", color = "white", fill = "grey50", size = 0.001) +
-    # scale_color_manual(values = c("grey60", "black")) +
     coord_flip() +
-    # scale_y_continuous(limits = c(-1.75, 3)) +
     facet_grid(~type,
                scales = "free") +
     geom_hline(yintercept = 0, linetype = 2, color = "grey20") +
@@ -198,21 +186,20 @@ dummy2 <- data.frame(type = c("PFNA", "Albuminuria"), Z= c(0, 0))
       legend.position = "none",
       strip.text.y = element_text(angle = 0, hjust = 0)))
 
-#  scale_color_brewer(name = "Direction", palette = "Dark2" ))
-
+# Combine Figures-----
 p <- grid.arrange(coef_plot, 
                   med_plot, 
                   nrow = 1,
                   widths = c(4,2))
 #Save
-ggsave(p,filename = here::here(dir_figure, "Fig2 Mediation V3.jpeg"),
+ggsave(p,filename = here::here(dir_figure, "Fig2 Mediation.jpeg"),
        width = 8, height = 6)
 ```
 
 ## Supplemental Table
 ```{r supplemental table}
 est <- read_csv(fs::path(dir_results, 
-                          "meet_in_middle_res_020924.csv")) %>%
+                          "meet_in_middle_res_sig_020924.csv")) %>%
   mutate(`PFNA β[95%CI]` = paste0(round(estimate_em, 2), " (", 
                                round(conf_low_em, 2), ",",
                                round(conf_high_em, 2),")"),
@@ -227,27 +214,8 @@ med <- read.csv(fs::path(dir_results,'pairwise_mediation_result.csv')) %>%
   filter(AptName %in% mim_res$feature_name)%>%
   mutate()
 
-# med_w <- med %>% filter(Effect %in% c("Rtnde", "Rpnie", "Rte")) %>%
-#   dplyr::select(feature_name, EntrezGeneSymbol,Effect, pe, ci_low, ci_high) %>%
-#   pivot_wider(
-#               names_from = "Effect",
-#               values_from = c(pe, ci_low, ci_high)) %>%
-#   mutate(`Rtnde[95%CI]` = paste0(round(pe_Rtnde, 2), " [", 
-#                                 round(ci_low_Rtnde, 2), ",",
-#                                 round(ci_high_Rtnde, 2),"]"),
-#          `Rpnie[95%CI]` = paste0(round(pe_Rpnie, 2), " [",
-#                                 round(ci_low_Rpnie, 2), ",",
-#                                 round(ci_high_Rpnie, 2),"]"),
-#          `Total Effect[95%CI]` = paste0(round(pe_Rte, 2), " [", 
-#                                 round(ci_low_Rte, 2), ",",
-#                                 round(ci_high_Rte, 2),"]"))
-
 med_w <- med %>% 
   dplyr::select(EntrezGeneSymbol,PMed.avg, PMed.avg.lo, PMed.avg.hi,PMed.avg.pval) %>% 
-  # mutate(`Proportion Mediated[95%CI]` = paste0(round(PMed.avg, 2), " (",
-  #                               round(PMed.avg.lo, 2), ",",
-  #                               round(PMed.avg.hi, 2),")"),
-  #        `P-value` = PMed.avg.pval)
   mutate(`Proportion Mediated` = paste0(round(PMed.avg, 2)),
          `P-value` = PMed.avg.pval)
 
@@ -265,10 +233,11 @@ df <- est %>%  mutate(EntrezGeneSymbol = ifelse(EntrezGeneSymbol == "FGF8_3", "F
                                  EntrezGeneSymbol == "IL27|EBI3" ~ "IL27",
                                  EntrezGeneSymbol == "GDF11|MSTN" ~ "GDF11", 
                                  TRUE ~ EntrezGeneSymbol)) %>%
-   rename(`Protein name` = EntrezGeneSymbol)
+   rename(`Protein name` = EntrezGeneSymbol)%>%
+  arrange(desc(`Proportion Mediated`))
   
 
 
-writexl::write_xlsx(df, fs::path(dir_results, "Supplemental Table 2.xlsx"))
+writexl::write_xlsx(df, fs::path(dir_results, "Supplemental Tables/Supplemental Table S3.xlsx"))
 ```
 

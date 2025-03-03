@@ -18,10 +18,10 @@ font-size: 12pt;
 </style>
 
 ```{r exposure outcome setup, include=FALSE}
-source(here::here("!libraries.R"))
-source(here::here("!directories.R"))
-source(here::here("!load_clean_data.R"))
-source(here::here("!functions.R"))
+source(here::here("1_project_setup/!libraries.R"))
+source(here::here("1_project_setup/!directories.R"))
+source(here::here("1_project_setup/!load_clean_data.R"))
+source(here::here("1_project_setup/!functions.R"))
 
 options(knitr.table.format = "html")
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
@@ -37,7 +37,6 @@ outcome_biomaker
 (analysis_pfas_names <- c(pfas_names_all, "score", "score_pfsas", "score_pfcas")) 
 # Covariates for primary analysis
 covars
-
 # Order of PFAS for figures
 levels
 ```
@@ -50,16 +49,16 @@ ind_vars <- data_scaled %>%
   dplyr::select(
     contains("score"), 
     contains("_sum"),
-    all_of(pfas_names_all)) |> 
+    all_of(pfas_names_all),
+    -contains("tile"),
+    -contains("median")) |> 
   colnames() %>%  
   tibble(exposure = .)
 
 # Get the name of all outcome variables created 
 dep_vars <- tibble(time = c(
-  # "daystohyp", 
   "daystomic"),
   event = c(
-    # "hyp",
     "mic"))
 
 # Get dataframe of all exposure outcome combinations
@@ -80,14 +79,8 @@ models$output <- map(models$formula,
                      ~coxph(as.formula(.), data = data_scaled) %>%
                        tidy(., conf.int = TRUE))
 
-## Log transformed PFAS (not scaled)
-models$output_pfas_lg2 <- map(models$formula,
-                     ~coxph(as.formula(.), data = data_log2) %>%
-                       tidy(., conf.int = TRUE))
-
 # Clean up results
 pfas_survival_models <- models %>%
-  dplyr::select(-output_pfas_lg2) %>%
   unnest(output) %>%
   tidylog::filter(grepl("score", term) | 
                     grepl("pfas_", term) | 
@@ -109,35 +102,8 @@ pfas_survival_models <- models %>%
          pfas_chain = rename_pfas_with_chainlength(pfas_names_cleaned = pfas), 
          pfas_chain = order_pfas_by_chain_length(pfas_chain))
 
-# Clean up results
-pfas_survival_models_lg2 <- models %>%
-    dplyr::select(-output) %>%
-  unnest(output_pfas_lg2) %>%
-  tidylog::filter(grepl("score", term) | 
-                    grepl("pfas_", term) | 
-                    grepl("_sum", term) & !grepl("quintile",term)) %>%
-  rename_pfas() %>%
-  mutate(HR = exp(estimate),
-         exp_conf_high = exp(conf.high),
-         exp_conf_low = exp(conf.low),
-         sig = ifelse(p.value < 0.05, "Sig.", "Not Sig."), 
-         ind_or_mix = if_else(str_detect(term, "score"), 
-                              "Score", "Individual"), 
-         functional_group = case_when(
-           ind_or_mix == "Score" ~ "Score", 
-           pfas  %in% c("PFOS", "PFHpS", "PFHxS") ~ "SA", 
-           pfas == "NMeFOSAA" ~ "Other", 
-           TRUE ~ "CA") |> 
-           fct_relevel("CA", "SA", "Other", "Score"), 
-         pfas = ifelse(pfas %in% levels, pfas, term), 
-         pfas_chain = rename_pfas_with_chainlength(pfas_names_cleaned = pfas), 
-         pfas_chain = order_pfas_by_chain_length(pfas_chain))
 
 pfas_survival_models_result<- pfas_survival_models %>%
-  filter(!(term %in% c("score_quintile", 
-                                 "score_quartile", 
-                                 "score_tertile", 
-                                 "score_median1"))) %>%
   mutate(`PFAS Name` = `pfas_chain`,
          `HR[95%CI]` = paste0(round(HR,2), "[", 
                              round(exp_conf_low, 2), ", ",
@@ -146,10 +112,10 @@ pfas_survival_models_result<- pfas_survival_models %>%
   dplyr::select(`PFAS Name`, `HR[95%CI]`,`P Value`)
 
 writexl::write_xlsx(pfas_survival_models_result, 
-                    fs::path(dir_results, "Supplemental Table 1.xlsx"))
+                    fs::path(dir_results, "Supplemental Tables/Supplemental Table S2.xlsx"))
 ```
 
-# Coefficient Plot
+# Figure 2. Coefficient Plot
 ```{r coef plot}
 ## D. Plot results ------
 # All results
@@ -201,7 +167,6 @@ pfas_survival_models |>
          axis.line.x = element_line(color = "black"),
          axis.line.y = element_line(color = "black"),
          legend.position = "none"))
-
 
 #Save
 ggsave(fig1a_pfas_albuminuria,
