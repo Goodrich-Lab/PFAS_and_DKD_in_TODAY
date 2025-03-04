@@ -7,9 +7,9 @@ format: html
 
 ```{r setup}
 # Sandbox analysis
-source(here::here("!libraries.r"))
-source(here::here("!directories.r"))
-source(here::here("!load_clean_data.R"))
+source(here::here("1_project_setup/!libraries.R"))
+source(here::here("1_project_setup/!directories.R"))
+source(here::here("1_project_setup/!load_clean_data.R"))
 library(ComplexUpset)
 ```
 
