@@ -1,0 +1,340 @@
+---
+title: 'Figures'
+author: "Hongxu Wang"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+format:
+  html:
+    toc: true
+    toc-location: left
+    code-fold: true
+    df-print: paged
+editor: 
+  default-view: side-by-side
+editor_options: 
+  chunk_output_type: console
+---
+
+# Set working environment
+## Load dataset
+```{r results=FALSE}
+# load libraries from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "1_project_setup", 
+           "!libraries.r")
+  )
+
+# load directory path from 00_project_setup 
+source(
+  fs::path(here::here(), 
+           "1_project_setup", 
+           "!directories.r")
+  )
+
+ks.PFNA.merged.filtered.joined <-
+  readRDS(fs::path(dir_data, "07_DEG_seurat.objects",
+                   "ks.PFNA.merged.filtered.joined.rds"))
+
+
+markers <- c("MFN1", "SPRED1", "THOC1", "TMEM87B")
+conditions <- c("CTR_wk1","PFNA_wk1","CTR_wk2","PFNA_wk2")
+cells <- c("Fibroblasts","Epithelial_2","Epithelial_1")
+
+col.set = c("#F8766D", "#7CAE00", "#00BFC4", "#C77CFF")
+
+wk <- c("wk1", "wk2")
+data_sub <- read_csv(fs::path(dir_data, "07_DEG_seurat.objects","data_analysis.csv")) # Dataframe Extracted from ks.PFNA.merged.filtered.joined seurat object
+
+sig_degs <- readxl::read_xlsx(fs::path(dir_data, "07_DEG_seurat.objects","sig_degs.xlsx")) # Significant (p_val_adj < 0.01) DEGS from scRNAseq analysis
+
+data_sub_sig <- sig_degs %>% 
+  dplyr::select(marker, ident, week) %>% 
+  tidylog::left_join(data_sub)
+```
+
+
+# Figure3. Final Violin plot (This part is the final code for Figure 3 in the manuscript)
+```{r}
+data_sub_sig <- data_sub_sig %>% mutate(Treatment = treatment)%>%
+  mutate(marker1 = case_when(marker == "THOC1"& 
+                              ident == "Epithelial_1" ~
+                               "THOC1_1",
+                             marker == "TMEM87B"&
+                               ident == "Epithelial_2" ~ 
+                               "TMEM87B_1",
+                             TRUE ~ marker))%>%
+  mutate(marker1 = factor(marker1, 
+                          levels = c("THOC1_1",
+                                     "SPRED1",
+                                     "MFN1",
+                                     "THOC1",
+                                     "TMEM87B_1",
+                                     "TMEM87B")))%>%
+  mutate(ident = str_replace(ident, "_", " "))
+
+ggplot(data_sub_sig, aes(x = fct_rev(ident), y = value, fill = Treatment)) +
+  facefuns::geom_split_violin() + 
+  coord_flip() +
+  theme_cowplot() +
+  facet_wrap( ~ marker1, scales = "free", ncol = 2) +
+  scale_alpha_manual(values = c("sig" = 1, "not-sig" = .00001))+
+   theme(panel.background = element_rect(fill="white"), 
+        strip.background = element_rect(fill = "white"),
+        strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+        text = element_text(size = 10, face = "bold"),
+        axis.line.x = element_line(color = "black", size = 0.6),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_line(color = "black", size = 0.6),
+        legend.position = "right") 
+
+# ggsave(fs::path(here::here(),
+#                  "Fig.combined_plot_final.jpg"), width = 6, height = 5, dpi = 1000, bg = "white")
+```
+
+
+
+# FigureS6. comparison of week1 and week2 (This part is the final code for the FigureS4)
+```{r}
+data_sub1 <- data_sub %>%
+    mutate(marker = factor(marker, 
+                          levels = c("SPRED1",
+                                     "THOC1_1",
+                                     "MFN1",
+                                     "THOC1",
+                                     "TMEM87B_1",
+                                     "TMEM87B")))%>%
+  mutate(ident = str_replace(ident, "_", " "))
+
+(pfna_plot <- ggplot(data_sub1%>% filter(treatment == "PFNA"), 
+                   aes(x = fct_rev(ident), y = value, fill = week)) +
+  facefuns::geom_split_violin() + 
+  coord_flip() +
+  theme_cowplot() +
+  facet_grid( ~ marker, scales = "free_x") +
+  scale_alpha_manual(values = c("sig" = 1, "not-sig" = .00001))+
+   theme(panel.background = element_rect(fill="white"), 
+        strip.background = element_rect(fill = "white"),
+        strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+        text = element_text(size = 10, face = "bold"),
+        axis.line.x = element_line(color = "black", size = 0.6),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_line(color = "black", size = 0.6),
+        legend.position = "right") )
+
+(ctr_plot <- ggplot(data_sub1%>% filter(treatment == "CTR"), 
+                   aes(x = fct_rev(ident), y = value, fill = week)) +
+  facefuns::geom_split_violin() + 
+  coord_flip() +
+  theme_cowplot() +
+  facet_grid( ~ marker, scales = "free_x") +
+  scale_alpha_manual(values = c("sig" = 1, "not-sig" = .00001))+
+   theme(panel.background = element_rect(fill="white"), 
+        strip.background = element_rect(fill = "white"),
+        strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+        text = element_text(size = 10, face = "bold"),
+        axis.line.x = element_line(color = "black", size = 0.6),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_line(color = "black", size = 0.6),
+        legend.position = "right") )
+
+
+(fig <- cowplot::plot_grid(NULL,
+                            pfna_plot,
+                           NULL,
+                            ctr_plot, 
+                            nrow  = 4, 
+                            ncol = 1, 
+                            rel_heights  = c(0.01,0.1),
+                            # rel_widths = c(0.1, 0.1, 0.1, 0.2),
+                            label_x = c(-0.011,0, -0.01, 0),
+                            labels = c("A. PFNA", 
+                                       "",
+                                       "B. CTR", 
+                                       
+                                      ""
+                                      ),
+                          label_size = 10,
+                          align = "",
+                          axis = "lt"))
+
+
+# ggsave(fs::path(here::here(),
+#                  "Fig.violin_plot_wk1vswk2.jpg"), width = 11, height = 7, dpi = 1000, bg = "white")
+```
+
+# Violin Plot based on dataset extract from Seurat object(Did not use this part)
+```{r fig.asp=1.5}
+# Create an empty 2x4 list
+plot <- vector("list", 4)
+
+
+  
+
+for(j in 1:length(markers)){
+    df = data_sub_sig %>% 
+         filter(marker == markers[j])%>%
+      mutate(ident = factor(ident, levels = cells))
+    if (nrow(df) == 0) {
+    next  # Skip this iteration if the dataframe is empty
+  }
+    plot[[j]] <- ggplot(df,
+       aes(x = ident, y = value, fill = treatment)) +
+      geom_split_violin() +
+      coord_flip()+
+      theme(panel.background = element_rect(fill="white"), 
+        strip.background = element_rect(fill = "white"),
+        strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+        text = element_text(size = 10),
+        axis.line.x = element_line(color = "black", size = 0.6),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_line(color = "black", size = 0.6),
+        legend.position = "none") 
+}
+
+# names(plot) <- wk
+names(plot) <- markers
+
+
+(fig1 <- cowplot::plot_grid(NULL,
+                            NULL,
+                            plot[[2]],
+                            plot[[1]],
+                           nrow  = 2,
+                           ncol  = 2,
+                           rel_heights  = c(0.01,0.1),
+                           # rel_widths = c(0.1, 0.1, 0.1, 0.2),
+                           labels = c(
+                                      markers[2],
+                                      markers[1],
+                                      "",
+                                      ""
+                                      ),
+                           label_x = c(0.4, 0.4, 0,0),
+                          label_size = 8,
+                          align = "lr",
+                          axis = "lt"))
+library(cowplot)
+
+
+## Week2
+(fig2 <- cowplot::plot_grid(NULL,
+                            NULL,  
+                            plot[[2]][[1]],
+                            plot[[2]][[3]], 
+                            nrow  = 2, 
+                            ncol = 2, 
+                            rel_heights  = c(0.01,0.1),
+                            # rel_widths = c(0.1, 0.1, 0.1, 0.2),
+                            label_x = c(0.4, 0.4, 0,0),
+                            labels = c(markers[1], 
+                                       markers[3], 
+                                       "",
+                                      ""
+                                      ),
+                          # label_x = c(0, 0, 0, 0, 0, 0, 0, 0),
+                          label_size = 8,
+                          align = "",
+                          axis = "lt"))
+
+tmem87b_1 <- ggplot(data_sub_sig %>% filter(marker == "TMEM87B"&ident == "Epithelial_2"&week == "wk2"),
+       aes(x = ident, y = value, fill = treatment)) +
+      geom_split_violin() +
+      coord_flip()+
+      # facet_grid(ident ~.,scales = "free") +
+      theme(panel.background = element_rect(fill="white"), 
+        strip.background = element_rect(fill = "white"),
+        strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+        text = element_text(size = 10),
+        axis.line.x = element_line(color = "black", size = 0.6),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_line(color = "black", size = 0.6),
+        legend.position = "none") 
+
+tmem87b_2 <- ggplot(data_sub_sig %>% filter(marker == "TMEM87B"&ident == "Fibroblasts"&week == "wk2"),
+       aes(x = ident, y = value, fill = treatment)) +
+      geom_split_violin() +
+      coord_flip()+
+      # facet_grid(ident ~.,scales = "free") +
+      theme(panel.background = element_rect(fill="white"), 
+        strip.background = element_rect(fill = "white"),
+        strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+        text = element_text(size = 10),
+        axis.line.x = element_line(color = "black", size = 0.6),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_line(color = "black", size = 0.6),
+        legend.position = "none") 
+
+
+## Week2
+(fig3 <- cowplot::plot_grid(NULL,
+                            NULL,  
+                            tmem87b_1,
+                            tmem87b_2, 
+                            nrow  = 2, 
+                            ncol = 2, 
+                            rel_heights  = c(0.01,0.1),
+                            # rel_widths = c(0.1, 0.1, 0.1, 0.2),
+                            label_x = c(0.4, 0.4, 0,0),
+                            labels = c(markers[4], 
+                                       markers[4], 
+                                       "",
+                                      ""
+                                      ),
+                          # label_x = c(0, 0, 0, 0, 0, 0, 0, 0),
+                          label_size = 8,
+                          align = "",
+                          axis = "lt"))
+
+ggsave(plot = fig1, filename = fs::path(here::here(),
+                 "Fig.week1_1.jpg"), width = 5, height = 2, dpi = 1000, bg = "white")
+
+ggsave(plot = fig2, filename = fs::path(here::here(),
+                 "Fig.week2_1.jpg"), width = 5, height = 2, dpi = 1000, bg = "white")
+
+ggsave(plot = fig3, filename = fs::path(here::here(),
+                 "Fig.week2_2.jpg"), width = 5, height = 2, dpi = 1000, bg = "white")
+
+# combine figures
+
+(p <- cowplot::plot_grid(final_plot, final_plot2,
+                          nrow  = 2, 
+                          align = "v",
+                          rel_heights = c(1,1),
+                          axis = "lt")+theme(plot.margin = margin(10, 10, 10, 10)))
+
+
+ggsave(fs::path(here::here(),
+                 "Fig.combined_violin_plot.jpg"), width = 8, height = 5, dpi = 1000, bg = "white")
+```
+
+
+# Did not use this part
+```{r}
+data_sub_sig <- data_sub_sig %>% mutate(Treatment = treatment)
+ggplot(data_sub_sig, aes(x = fct_rev(ident), y = value, fill = treatment)) +
+  facefuns::geom_split_violin() + 
+  coord_flip() +
+  theme_cowplot() +
+  facet_wrap( ~ marker, scales = "free", drop = TRUE) +
+  scale_alpha_manual(values = c("sig" = 1, "not-sig" = .00001))+
+   theme(panel.background = element_rect(fill="white"), 
+        strip.background = element_rect(fill = "white"),
+        strip.text.y = element_text(angle = 0, face = "bold", size = 10),
+        text = element_text(size = 10, face = "bold"),
+        axis.line.x = element_line(color = "black", size = 0.6),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_line(color = "black", size = 0.6),
+        legend.position = "right") 
+
+ggsave(fs::path(here::here(),
+                 "Fig.combined_plot_final.jpg"), width = 8, height = 5, dpi = 1000, bg = "white")
+```
+
+

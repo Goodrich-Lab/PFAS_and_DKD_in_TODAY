@@ -192,11 +192,12 @@ overlapping_sig <- full_data_sig_w |>
 
 # Save data (change if needed to indicate which significance threshold is used)
 
-write_csv(full_data_sig_w,
-          fs::path(dir_results,
-                   "Combined_proteomics_scRNAseq_sig_fdr_results_090924.csv"))
+# write_csv(full_data_sig_w,
+#           fs::path(dir_results,
+#                    "Combined_proteomics_scRNAseq_sig_fdr_results_090924.csv"))
 
 table(is.na(full_data_sig_w$EntrezGeneSymbol))
+
 # 2. Combining in Long formate (best for upset plot) -----
 # Perform further cleaning for combining in long format
 ## a. Mediation results ----
@@ -246,16 +247,84 @@ alldat <- alldat |>
       TRUE ~ value)) |> 
   tidylog::select(gene, variable, value)
 
+```
+
+# V. Examine genes that are overlapping between scRNAseq and E-->M/MIM
+```{r}
+# Remove previous scRNAseq data and merge in the long format data              
+overlapping_sig_l <- overlapping_genes |> 
+  tidylog::select(-c(week1_cycling:sc_gene)) |> 
+  tidylog::left_join(scRNAseq_deg_sig_fdr05, 
+                     by = c("EntrezGeneSymbol" = "gene"))
+
+# Filter that are significant E->M or MIM in TODAY and sig in scRNAseq
+overlapping_sig_l <- overlapping_sig_l |> 
+  tidylog::filter(sig_overall_with_efnumtests %in% 
+                    c("scRNAseq & TODAY E->M p_05", 
+                      "scRNAseq & TODAY Sig p_05 in MIM")) 
+
+# Create summary vars  
+overlapping_sig_l <- overlapping_sig_l |>   
+  tidylog::mutate(
+    same_dir_em_and_scrna = if_else(estimate_em * avg_log2FC > 0, 
+                                    "Same Direction", 
+                                    "Different Direction"), 
+    em_dir = if_else(estimate_em > 0, 
+                     "Upregulated in TODAY", 
+                     "Downregulated in TODAY"))
+
+
+# Plot all variables 
+ggplot(overlapping_sig_l, 
+       aes(x = estimate_em, 
+           y = avg_log2FC, 
+           group = EntrezGeneSymbol)) +
+  geom_hline(yintercept = 0, linetype = 2, color = "grey20") +
+  geom_line() +  
+  geom_point(aes(shape = week, 
+                 color = week) ) + 
+  facet_wrap(~ em_dir, scales = "free_x")
+
+length(unique(overlapping_sig_l$EntrezGeneSymbol))
+
+# Select only those in the same direction
+same_dir_sig <- overlapping_sig_l |> 
+  tidylog::filter(same_dir_em_and_scrna == "Same Direction")
+
+different_dir_sig <- overlapping_sig_l |> 
+  tidylog::filter(same_dir_em_and_scrna != "Same Direction")
+
+num_unique_overlapping_genes <- length(unique(same_dir_sig$EntrezGeneSymbol))
+
+# Plot variables in same direction 
+same_dir_sig |>
+  # group_by(EntrezGeneSymbol) |> 
+  # filter(avg_log2FC == max(avg_log2FC)) |>
+  filter(cell_type != "Cycling") |>
+  ggplot(aes(x = estimate_em, 
+             y = avg_log2FC)) +
+  # geom_hline(yintercept = 0, linetype = 2, color = "grey20") +
+  geom_line(aes(group = EntrezGeneSymbol), color = "grey80") +
+  # geom_smooth(method = "lm") +
+  geom_text(aes(label =EntrezGeneSymbol, color = cell_type), 
+            size = 3) + 
+  facet_wrap(~ week, scales = "free_x")
+```
+
+# IV.Upset plot
+
+* Figure S5. The number of significant proteins overlaps in the proteomics and single cell transcriptomics data. 
+```{r}
+
+# Exclude the genes with different direction of associaiton between the TODAY MIM and single cell data
+# alldat <- alldat %>% filter(!gene %in% unique(different_dir_sig$EntrezGeneSymbol))
+
 # Summarize into dataset for upset plot 
 upset_dat <- alldat |> 
   pivot_wider(names_from = variable, id_cols = "gene") |>
   dplyr::mutate(across(where(is.numeric), function(x){replace_na(x, 0)}))
 
-```
 
-
-# IV. Upset plot
-```{r}
 vars_to_plot <- upset_dat |> tidylog::select(-gene) |> colnames()
 
 upset_metadata = data.frame(
