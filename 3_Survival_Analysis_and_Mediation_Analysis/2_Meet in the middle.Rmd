@@ -48,27 +48,28 @@ result_em <- epiomics::owas(df = data_scaled,
 result_em <- result_em |> 
   mutate(omic_layer = if_else(feature_name %in% prot_names, "Proteomics", "Metabolomics")) |> 
   group_by(var_name, omic_layer) |>
-  mutate(sig_efnum = if_else(p_value < (0.05/42), "Sig", "Not sig"), 
-         adjusted_pval = p.adjust(p_value, method = "fdr"),
-         sig_fdr = if_else(adjusted_pval < 0.2, "Sig", "Not sig")) |> 
-  ungroup()
-
-## A. Clean results -----
-# get name of all sig proteins
-omic_names_sig <- result_em |> 
-  dplyr::filter(p_value < 0.05)
-omic_names_sig <- unique(omic_names_sig$feature_name)
-
-# Select key columns, filter to significant omics only
-result_em_sig <- result_em %>% 
-  tidylog::filter(feature_name %in% omic_names_sig) |> 
+  mutate(sig_efnum_em = if_else(p_value < (0.05/42), "Sig", "Not sig"), 
+         adjusted_pval_em = p.adjust(p_value, method = "fdr"),
+         sig_fdr_em = if_else(adjusted_pval < 0.2, "Sig", "Not sig")) |> 
+  ungroup()%>%
   dplyr::select(omic_layer, var_name, feature_name, test_statistic,
-                estimate, conf_low, conf_high, p_value, adjusted_pval, sig_efnum, sig_fdr) |> 
+                estimate, conf_low, conf_high, p_value, adjusted_pval_em, sig_efnum_em, sig_fdr_em) |> 
   rename(estimate_em = estimate, 
          conf_low_em =  conf_low, 
          conf_high_em = conf_high,
          p_value_em = p_value, 
          test_statistic_em = test_statistic) 
+
+## A. Clean results -----
+# get name of all sig proteins
+omic_names_sig <- result_em |> 
+  dplyr::filter(p_value_em < 0.05)
+omic_names_sig <- unique(omic_names_sig$feature_name)
+
+
+# Select key columns, filter to significant omics only
+result_em_sig <- result_em %>% 
+  tidylog::filter(feature_name %in% omic_names_sig)
 
 length(unique(result_em_sig$feature_name))
 
@@ -105,13 +106,10 @@ mo_res_models <- mo_res_models %>%
 
 ## A. Clean results ----
 # Select key columns, filter significant only
-mo_res_models <- mo_res_models %>% 
+result_mo <- mo_res_models %>% 
   mutate(sig_efnum_mo = if_else(p.value < (0.05/42), "Sig", "Not sig"),
          adjusted_pval_mo = p.adjust(p.value, method = "fdr"),
-         sig_fdr_mo = if_else(adjusted_pval_mo < 0.2, "Sig", "Not sig")) 
-
-result_mo_sig <- mo_res_models %>%
-  tidylog::filter(p.value < 0.05) %>%
+         sig_fdr_mo = if_else(adjusted_pval_mo < 0.2, "Sig", "Not sig")) %>%
   dplyr::select(omic, estimate, p.value, 
                 estimate, conf.low, conf.high,
                 HR, exp_conf_high, exp_conf_low, adjusted_pval_mo, sig_fdr_mo, sig_efnum_mo) |> 
@@ -119,17 +117,27 @@ result_mo_sig <- mo_res_models %>%
          estimate_mo = estimate, 
          conf_low_mo = conf.low, 
          conf_high_mo = conf.high, 
-         p.value_mo = p.value,
+         p_value_mo = p.value,
          HR_mo = HR,
          exp_conf_low_mo = exp_conf_low,
          exp_conf_high_mo = exp_conf_high)
 
 
+result_mo_sig <- result_mo %>%
+  tidylog::filter(p_value_mo < 0.05)
+  
+
+
 # 3) Combine and analyze meet in middle --------------------
-# Combine em and mo
+# Combine em and mo (all)
+all_res_temp <- tidylog::inner_join(result_em, 
+                                    result_mo, 
+                                    by = "feature_name")
+# Combine em and mo (sig)
 mim_res_temp <- tidylog::inner_join(result_em_sig, 
                                     result_mo_sig, 
                                     by = "feature_name")
+
 
 # Add proteomics metadata
 mim_res_temp <- mim_res_temp |> 
@@ -147,5 +155,9 @@ mim_res_temp <- mim_res_temp |>
 write_csv(mim_res_temp, 
           fs::path(dir_results, 
                    "meet_in_middle_res_sig.csv")) 
+
+write_csv(all_res_temp, 
+          fs::path(dir_results, 
+                   "meet_in_middle_res.csv")) 
 ```
 

@@ -1,10 +1,12 @@
----
-title: "Run ComptoxAI on integrated scRNAseq and TODAY results"
-format: html
----
-
-# 0. Set up project and read in data 
-```{python}
+# type: ignore
+# flake8: noqa
+#
+#
+#
+#
+#
+#
+#
 #| label: Read Data 
 # Set up 
 from pprint import pprint
@@ -16,9 +18,11 @@ import numpy as np
 # current_dir = pathlib.Path(__file__).parent.resolve()
 current_directory = Path.cwd()
 
+print(current_directory)
+
 # Get folder names
-dir_dat = current_directory.parent.parent / "0_data" / "clean_data"
-dir_res = current_directory.parent.parent / "2_results"
+dir_dat = current_directory /"P30 pilot"/ "0_data" / "clean_data"
+dir_res = current_directory /"P30 pilot"/ "2_results"
 
 
 # Read in proteomics metadata
@@ -40,17 +44,17 @@ genes_in_vitro_only = gene_data[gene_data['sig_overall_simplified'] == 'scRNAseq
 #print(split_genes)
 # type(gene_data)
 #print(type(prot_metadata.EntrezGeneSymbol))
-```
-
-
-# 1. Query ComptoxAI database using Neo4j. 
-Note: to get this to run, you have to have an Neo4j instance of comptoxai.
-```{python}
+#
+#
+#
+#
+#
+#
 #| label: ComptoxAI query
 # Connect to neo4j database
 import comptox_ai
 from comptox_ai.db.graph_db import GraphDB
-db = GraphDB(username="cytoscape", password= "12345", hostname="localhost:7687")
+db = GraphDB()
 #db = GraphDB(username="neo4j_user", password="12345", hostname="localhost:7687")
 
 # Create cypher query
@@ -65,14 +69,14 @@ query_string = start_string + "[" + ", ".join(["'" + symbol + "'" for symbol in 
 # Run Cypher Query
 data = db.run_cypher(query_string)
 # print(query_string)
-```
-
-
-# 2. Create Graph
-
-## 2.a. Create Base Graph from ComptoxAI query
-
-```{python}
+#
+#
+#
+#
+#
+#
+#
+#
 #| label: Create network diagram
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -83,7 +87,8 @@ G = nx.DiGraph()
 
 # Function to compute the combined 'type' attribute
 def compute_type(node):
-    if node.get('commonName') == 'PFNA':
+    # if node.get('commonName') == 'PFNA':
+    if node.get('xrefDTXSID') == 'DTXSID8031863':
         return 'PFAS'
     if node.get('commonName') == 'Diabetic Nephropathy':
         return 'Disease'
@@ -119,11 +124,11 @@ for entry in data:
     G.add_edge(start_node_id, end_node_id, relationship=rel_type, weight = 1)
 
 del data 
-```
-
-
-## 2.b Create figure
-```{python}
+#
+#
+#
+#
+#
 from collections import Counter
 
 # Color mapping
@@ -149,11 +154,11 @@ print(len(G))
 #nx.draw_networkx_edge_labels(G, pos, edge_labels=nx.get_edge_attributes(G, 'relationship'))
 
 #plt.show()
-```
-
-
-# 3. Check graph for issues
-```{python}
+#
+#
+#
+#
+#
 #| label: Check self loops
 # Check graph after adding metadata
 isolated_nodes = list(nx.isolates(G))
@@ -170,10 +175,10 @@ isolated_self_loop_nodes = [
     if G.degree(node) == 1  # Total degree (in-degree + out-degree) is 1, indicating only a self-loop
 ]
 print(f"Nodes only connected to themselves: {isolated_self_loop_nodes}")
-```
-
-## 3.a Identify disconnected graphs
-```{python}
+#
+#
+#
+#
 #| label: identify disconnected graphs
 # Generate weakly connected components
 weakly_connected_components = nx.weakly_connected_components(G)
@@ -220,12 +225,12 @@ print(len(G_trim.nodes))
 print(len(nodes_not_in_largest))
 print(len(G_trim.nodes) == len(G.nodes)-len(nodes_not_in_largest))
 print(nodes_not_in_largest)
-```
-
-# 4. Analyze communities and paths between PFNA and DKD
-
-## 4.a. leidenalg
-```{python}
+#
+#
+#
+#
+#
+#
 #| label: compute leidenalg communities 
 import igraph as ig
 import leidenalg as la
@@ -233,7 +238,7 @@ import cairocffi as cairo
 import matplotlib.pyplot as plt
 
 
-source_node = "PFNA"
+source_node = "DTXSID8031863"
 target_node = "C0011881"
 
 # convert to igraph
@@ -294,10 +299,10 @@ Counter(leidenalg_community_4)
 Counter(leidenalg_community)
 # Create a concatenated variable that combines groups 3 and above
 
-```
-
-
-```{python}
+#
+#
+#
+#
 #| label: map with G_trim  
 # Create a mapping from igraph vertices to NetworkX nodes
 # Assuming nodes in G_trim are labeled from 0 to n-1
@@ -330,10 +335,10 @@ for idx, community in enumerate(leidenalg_community_4):
     else:
         G_trim.nodes[nx_node]['z'] = 0
         G_trim.nodes[nx_node]['clust_type1'] = "Other"
-```
-
-
-```{python}
+#
+#
+#
+#
 
 # Create a subgraph with nodes that have 'z' == 1
 # filtered_nodes = [node for node, data in G_trim.nodes(data=True) if data.get('z') == 1]
@@ -342,17 +347,17 @@ for idx, community in enumerate(leidenalg_community_4):
 # # Verify by printing only a few nodes
 # for node, data in G_subset.nodes(data=True):
 #     print(f"Node: {node}, z: {data.get('z')}, clust_type: {data.get('clust_type')}, clust: {data.get('leidenalg_community_min')}")
-```
-
-## 4.b. Find all simple paths from source_node to target_node
-```{python}
+#
+#
+#
+#
 # Find all simple paths from source_node to target_node
 all_paths = list(nx.shortest_path(G_trim, source=source_node, target=target_node))
 print(all_paths)
-```
-
-## 4.c. Create Dataframe of results
-```{python}
+#
+#
+#
+#
 #| label: Create DF of cluster results
 # Create a DataFrame linking node names with the community identities
 node_ids = list(G_trim.nodes)
@@ -382,21 +387,21 @@ print(f"Number of rows lost from original gene_data: {rows_before['gene_data'] -
 # print(df_merged.columns)
 
 df_merged.to_csv(dir_res / 'network_graph_analysis.csv', index=False)
-```
-
-
-Get Cross tabs of the results
-```{python}
+#
+#
+#
+#
+#
 #| label:  Cross tabs
 cross_table = pd.crosstab(df_merged['sig_overall'], df_merged['leidenalg_community_min'])
 # Convert counts to percentages
 # cross_table_percent = cross_table.div(cross_table.sum(axis=1), axis=0) * 100
 cross_table
-```
-
-
-# 5. Save Graph
-```{python}
+#
+#
+#
+#
+#
 #| label:  save graph
 
 # Save file
@@ -406,4 +411,6 @@ file_path = dir_res / 'ComptoxAI' / 'PFAS_prot_in_vitro_sig_100924.graphml'
 # Write the graph to a GraphML file
 nx.write_graphml(G_trim, file_path)
 print(f"Network saved to {file_path}")
-```
+#
+#
+#
