@@ -1,4 +1,4 @@
-# Perfluoroalkyl Substances and Diabetic Kidney Disease in Youth with Type 2 Diabetes: A Proof-of-Concept Translational Computational Toxicology Study![image](https://github.com/user-attachments/assets/b950c9be-fff5-421a-ad95-d6751ddcfe19)
+# Perfluoroalkyl Substances and Diabetic Kidney Disease in Youth with Type 2 Diabetes: A Proof-of-Concept Translational Computational Toxicology Study
 
 
 ## Contents
